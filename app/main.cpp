@@ -119,6 +119,7 @@ constexpr std::pair<TargetKind, const char*> kKindLabels[] = {
     {TargetKind::Helicopter, "Гелікоптери"},
     {TargetKind::Plane, "Літаки"},
     {TargetKind::Ground, "Наземні цілі"},
+    {TargetKind::Unknown, "Невідомі"},
 };
 
 struct StatusLine {
@@ -208,7 +209,9 @@ public:
     TargetIcons& operator=(const TargetIcons&) = delete;
 
     const SnoutIcon& forKind(TargetKind kind) const { return *icons_.at(kind); }
-    const SnoutIcon& forTarget(const Target& target) const { return forKind(targetKind(target.iconName)); }
+    const SnoutIcon& forTarget(const Target& target) const {
+        return forKind(targetKind(target.iconName, target.detectedType));
+    }
 
     // Call between beginHalos() and endHalos().
     void drawHalo(Vector2 center, float scale, float opacity) const {
@@ -354,7 +357,9 @@ private:
     void drawSummary(const std::vector<TargetMotion::Marker>& markers, const TargetIcons& icons,
                      int height) const {
         std::map<TargetKind, int> counts;
-        for (const auto& marker : markers) ++counts[targetKind(marker.target.iconName)];
+        for (const auto& marker : markers) {
+            ++counts[targetKind(marker.target.iconName, marker.target.detectedType)];
+        }
         if (counts.empty()) return;
 
         const float panelHeight = 2 * kPanelPaddingPx + kPanelRowPx * counts.size();

@@ -1,5 +1,7 @@
 #include "target_kind.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <utility>
 
 namespace alarmmap {
@@ -14,6 +16,7 @@ constexpr std::pair<std::string_view, TargetKind> kKindByIconPrefix[] = {
     {"ic_fixed_wing_loitering", TargetKind::Drone},
     {"ic_fixed_wing_very_small", TargetKind::Drone},
     {"ic_fixed_wing_small", TargetKind::Drone},
+    {"ic_lancet", TargetKind::Drone},
     {"ic_missile", TargetKind::CruiseMissile},
     {"ic_fixed_wing_lacm", TargetKind::CruiseMissile},
     {"ic_fixed_wing_lr_tasm", TargetKind::CruiseMissile},
@@ -21,15 +24,32 @@ constexpr std::pair<std::string_view, TargetKind> kKindByIconPrefix[] = {
     {"ic_airbomb", TargetKind::GuidedBomb},
     {"ic_rotary_wing", TargetKind::Helicopter},
     {"ic_ground", TargetKind::Ground},
+    {"ic_plane", TargetKind::Plane},
+    {"ic_fixed_wing", TargetKind::Plane},
+    {"ic_asterix_plane", TargetKind::Plane},
 };
+
+constexpr std::string_view kIconPrefix = "ic_";
+
+bool isNonBlank(std::string_view text) {
+    return std::any_of(text.begin(), text.end(),
+                       [](char symbol) { return !std::isspace(static_cast<unsigned char>(symbol)); });
+}
 
 }  // namespace
 
-TargetKind targetKind(std::string_view iconName) {
+TargetKind targetKind(std::string_view iconName, std::string_view detectedType) {
+    const auto isIconNameCharacter = [](char symbol) {
+        return (symbol >= 'a' && symbol <= 'z') || (symbol >= '0' && symbol <= '9') || symbol == '_';
+    };
+    const bool identified = isNonBlank(detectedType) && iconName.size() > kIconPrefix.size() &&
+                            iconName.starts_with(kIconPrefix) &&
+                            std::all_of(iconName.begin(), iconName.end(), isIconNameCharacter);
+    if (!identified) return TargetKind::Unknown;
     for (const auto& [prefix, kind] : kKindByIconPrefix) {
         if (iconName.starts_with(prefix)) return kind;
     }
-    return TargetKind::Plane;
+    return TargetKind::Drone;
 }
 
 }  // namespace alarmmap

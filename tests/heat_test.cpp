@@ -287,12 +287,21 @@ void testTargetKinds() {
         {"ic_fixed_wing_turboprop", TargetKind::Plane},
         {"ic_asterix_plane_stroke", TargetKind::Plane},
         {"ic_asterix_plane_masked", TargetKind::Plane},
-        {"ic_air_threat_combined_white", TargetKind::Plane},
-        {"", TargetKind::Plane},
+        {"ic_lancet", TargetKind::Drone},
+        // Identified targets with icons this table does not know are drones.
+        {"ic_air_threat_combined_white", TargetKind::Drone},
+        {"ic_not_known_yet", TargetKind::Drone},
     };
     for (const auto& [iconName, kind] : expected) {
-        check(targetKind(iconName) == kind, std::string("kind of '") + iconName + "'");
+        check(targetKind(iconName, "Detected") == kind, std::string("kind of '") + iconName + "'");
     }
+    // Identification rules of the site's resolveDetectedIcon.
+    check(targetKind("", "") == TargetKind::Unknown, "no icon, no detected type");
+    check(targetKind("ic_shahed", "") == TargetKind::Unknown, "icon without detected type");
+    check(targetKind("ic_shahed", "  ") == TargetKind::Unknown, "blank detected type");
+    check(targetKind("", "Shahed") == TargetKind::Unknown, "detected type without icon");
+    check(targetKind("IC_SHAHED", "Shahed") == TargetKind::Unknown, "malformed icon name");
+    check(targetKind("ic_", "Shahed") == TargetKind::Unknown, "bare prefix");
 }
 
 }  // namespace

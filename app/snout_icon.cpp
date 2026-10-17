@@ -131,6 +131,8 @@ void drawSilhouette(TargetKind kind) {
         case TargetKind::GuidedBomb: return drawGuidedBomb();
         case TargetKind::Helicopter: return drawHelicopter();
         case TargetKind::Ground: return drawGround();
+        // The site draws unidentified targets with its Shahed icon.
+        case TargetKind::Unknown: return drawDrone();
     }
     throw std::logic_error("unhandled target kind");
 }
