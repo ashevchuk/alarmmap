@@ -119,6 +119,10 @@ constexpr Color kPanelBackground = {12, 15, 20, 200};
 constexpr Color kPanelBorder = {70, 80, 96, 160};
 constexpr Color kPanelText = {205, 212, 224, 255};
 constexpr Color kScreenClear = BLACK;
+constexpr Color kCreditsColor = {120, 128, 142, 200};
+constexpr float kCreditsFontPx = 12;
+// GeoNames data is CC BY 4.0, which requires naming the source.
+constexpr const char* kCreditsText = "Дані: map.ukrainealarm.com · GeoNames (CC BY 4.0) · Natural Earth";
 
 // Summary panel rows, most dangerous first.
 constexpr std::pair<TargetKind, const char*> kKindLabels[] = {
@@ -350,6 +354,7 @@ public:
         drawTargets(markers, camera, icons);
         drawSummary(markers, icons, static_cast<int>(height));
         if (status) drawStatus(*status);
+        drawCredits(width, height);
     }
 
     std::optional<StatusLine> status;
@@ -372,6 +377,13 @@ private:
             pulses[regionId] = static_cast<float>(kPulseMaxOpacity * envelope * wave);
         }
         return pulses;
+    }
+
+    void drawCredits(float width, float height) const {
+        const Vector2 extent = MeasureTextEx(font_, kCreditsText, kCreditsFontPx, kTextSpacingPx);
+        DrawTextEx(font_, kCreditsText,
+                   {width - kStatusMarginPx - extent.x, height - kStatusMarginPx / 2 - extent.y},
+                   kCreditsFontPx, kTextSpacingPx, kCreditsColor);
     }
 
     void drawStatus(const StatusLine& line) const {

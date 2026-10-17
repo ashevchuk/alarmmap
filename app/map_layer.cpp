@@ -71,9 +71,11 @@ constexpr Vector2 kLabelShadowOffsetPx = {0.8f, 1};
 constexpr float kCapitalFontPx = 15;
 constexpr float kRegionalCityFontPx = 13;
 constexpr float kTownFontPx = 12;
+constexpr float kVillageFontPx = 11;
 constexpr float kCapitalDotPx = 4.5f;
 constexpr float kRegionalCityDotPx = 3.2f;
 constexpr float kTownDotPx = 2.3f;
+constexpr float kVillageDotPx = 1.6f;
 constexpr float kCityLabelGapPx = 4;
 constexpr int kVignetteSize = 512;
 constexpr float kVignetteClearShare = 0.35f;
@@ -90,6 +92,7 @@ constexpr Color kHighlight = {255, 70, 55, 255};
 constexpr Color kLabelShadow = {0, 0, 0, 170};
 constexpr Color kCityLabel = {232, 236, 244, 255};
 constexpr Color kTownLabel = {196, 202, 214, 240};
+constexpr Color kVillageLabel = {160, 168, 182, 230};
 constexpr Color kCityDot = {236, 240, 248, 255};
 constexpr Color kCityDotOutline = {10, 12, 16, 255};
 constexpr Color kMaskColor = WHITE;
@@ -311,32 +314,53 @@ void MapLayer::drawLabels(const Camera2D& camera, float scale, double viewZoom) 
         });
     };
 
-    const float regionSize = kLabelFontPx * scale;
-    for (const Label& label : labels_) {
-        const Vector2 anchor = GetWorldToScreen2D(label.position, camera);
-        const Vector2 extent = MeasureTextEx(font_, label.text.c_str(), regionSize, spacing);
-        const Vector2 origin = {anchor.x - extent.x / 2, anchor.y - extent.y / 2};
-        drawText(label.text, origin, regionSize, kLabel);
-        placed.push_back({origin.x, origin.y, extent.x, extent.y});
-    }
+    const auto placeOblastLabels = [&] {
+        const float size = kLabelFontPx * scale;
+        for (const Label& label : labels_) {
+            const Vector2 anchor = GetWorldToScreen2D(label.position, camera);
+            const Vector2 extent = MeasureTextEx(font_, label.text.c_str(), size, spacing);
+            const Rectangle area = {anchor.x - extent.x / 2, anchor.y - extent.y / 2, extent.x, extent.y};
+            if (!isFree(area)) continue;
+            drawText(label.text, {area.x, area.y}, size, kLabel);
+            placed.push_back(area);
+        }
+    };
 
     const double webZoom = alarmmap::webZoomForView(viewZoom);
-    std::vector<const alarmmap::City*> cities;
+    const auto targetWidth = static_cast<float>(cache_.texture.width);
+    const auto targetHeight = static_cast<float>(cache_.texture.height);
+    std::vector<std::pair<const alarmmap::City*, Vector2>> cities;
     for (const alarmmap::City& city : cities_) {
-        if (city.minZoom <= webZoom) cities.push_back(&city);
+        if (city.minZoom > webZoom) continue;
+        const Vector2 anchor = GetWorldToScreen2D(toVector(city.position), camera);
+        if (anchor.x < 0 || anchor.y < 0 || anchor.x > targetWidth || anchor.y > targetHeight) continue;
+        cities.emplace_back(&city, anchor);
     }
-    std::stable_sort(cities.begin(), cities.end(), [](const auto* left, const auto* right) {
+    // Capital first, then by how early a place appears, then by size.
+    std::stable_sort(cities.begin(), cities.end(), [](const auto& left, const auto& right) {
         const auto priority = [](const alarmmap::City* city) {
             return std::tuple(city->kind != alarmmap::CityKind::Capital, city->minZoom, -city->population);
         };
-        return priority(left) < priority(right);
+        return priority(left.first) < priority(right.first);
     });
-    for (const alarmmap::City* city : cities) {
+
+    // The capital and oblast centres outrank oblast names, which outrank
+    // every other place.
+    bool oblastLabelsPlaced = false;
+    for (const auto& [city, anchor] : cities) {
+        const bool major = city->kind == alarmmap::CityKind::Capital || city->kind == alarmmap::CityKind::Regional;
+        if (!major && !oblastLabelsPlaced) {
+            placeOblastLabels();
+            oblastLabelsPlaced = true;
+        }
         const bool capital = city->kind == alarmmap::CityKind::Capital;
         const bool town = city->kind == alarmmap::CityKind::Town;
-        const float dot = (capital ? kCapitalDotPx : town ? kTownDotPx : kRegionalCityDotPx) * scale;
-        const float size = (capital ? kCapitalFontPx : town ? kTownFontPx : kRegionalCityFontPx) * scale;
-        const Vector2 anchor = GetWorldToScreen2D(toVector(city->position), camera);
+        const bool village = city->kind == alarmmap::CityKind::Village;
+        const float dot =
+            (capital ? kCapitalDotPx : village ? kVillageDotPx : town ? kTownDotPx : kRegionalCityDotPx) * scale;
+        const float size =
+            (capital ? kCapitalFontPx : village ? kVillageFontPx : town ? kTownFontPx : kRegionalCityFontPx) *
+            scale;
         const Vector2 extent = MeasureTextEx(font_, city->name.c_str(), size, spacing);
         const Rectangle dotArea = {anchor.x - dot, anchor.y - dot, 2 * dot, 2 * dot};
         const float gap = dot + kCityLabelGapPx * scale;
@@ -352,10 +376,12 @@ void MapLayer::drawLabels(const Camera2D& camera, float scale, double viewZoom) 
             DrawCircleV(anchor, dot * 0.55f, kCityDotOutline);
             DrawCircleV(anchor, dot * 0.3f, kCityDot);
         }
-        drawText(city->name, {label->x, label->y}, size, town ? kTownLabel : kCityLabel);
+        drawText(city->name, {label->x, label->y}, size,
+                 village ? kVillageLabel : town ? kTownLabel : kCityLabel);
         placed.push_back(dotArea);
         placed.push_back(*label);
     }
+    if (!oblastLabelsPlaced) placeOblastLabels();
 }
 
 void MapLayer::prepare(const alarmmap::MapView& view, double now) {

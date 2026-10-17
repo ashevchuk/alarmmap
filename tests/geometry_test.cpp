@@ -288,6 +288,9 @@ void testCities() {
                        {"geometry", {{"type", "Point"}, {"coordinates", json::array({31.88, 51.05})}}}}})}};
     const auto cities = loadCities(collection);
     check(cities.size() == 2, "two cities");
+    json village = collection;
+    village["features"][1]["properties"]["kind"] = "village";
+    check(loadCities(village)[1].kind == CityKind::Village, "village kind");
     if (cities.size() == 2) {
         check(cities[0].name == "Київ" && cities[0].kind == CityKind::Capital && cities[0].minZoom == 3.7,
               "capital properties");
@@ -296,7 +299,7 @@ void testCities() {
     }
 
     json badKind = collection;
-    badKind["features"][0]["properties"]["kind"] = "village";
+    badKind["features"][0]["properties"]["kind"] = "hamlet";
     bool threw = false;
     try {
         loadCities(badKind);

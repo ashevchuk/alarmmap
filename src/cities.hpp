@@ -9,13 +9,13 @@
 
 namespace alarmmap {
 
-enum class CityKind { Capital, Regional, Town };
+enum class CityKind { Capital, Regional, Town, Village };
 
 struct City {
     std::string name;
     CityKind kind = CityKind::Town;
     double population = 0;
-    // Web-map zoom level from which Natural Earth suggests showing the place.
+    // Web-map zoom level from which the place is shown.
     double minZoom = 0;
     MapPoint position;
 };

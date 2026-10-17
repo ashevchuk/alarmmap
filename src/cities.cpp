@@ -15,6 +15,7 @@ CityKind kindOf(const std::string& kind) {
     if (kind == "capital") return CityKind::Capital;
     if (kind == "regional") return CityKind::Regional;
     if (kind == "town") return CityKind::Town;
+    if (kind == "village") return CityKind::Village;
     throw std::runtime_error("unknown city kind '" + kind + "'");
 }
 
