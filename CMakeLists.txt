@@ -24,6 +24,7 @@ set(WARNING_FLAGS -Wall -Wextra -Wpedantic)
 
 add_library(alarmmap_core STATIC
     src/base64url.cpp
+    src/cities.cpp
     src/heat_cells.cpp
     src/heat_timing.cpp
     src/http.cpp

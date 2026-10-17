@@ -1,5 +1,6 @@
 // Usage: geometry_test <tests/data directory>
 
+#include "cities.hpp"
 #include "map_update.hpp"
 #include "map_view.hpp"
 #include "projection.hpp"
@@ -275,6 +276,39 @@ void testMapView() {
     check(view.zoom() == 1 && view.center() == MapPoint{kMapWidth / 2, kMapHeight / 2}, "reset");
 }
 
+void testCities() {
+    const json collection = {
+        {"type", "FeatureCollection"},
+        {"features",
+         json::array({{{"type", "Feature"},
+                       {"properties", {{"name", "Київ"}, {"kind", "capital"}, {"population", 2709000}, {"minZoom", 3.7}}},
+                       {"geometry", {{"type", "Point"}, {"coordinates", json::array({30.5234, 50.4501})}}}},
+                      {{"type", "Feature"},
+                       {"properties", {{"name", "Ніжин"}, {"kind", "town"}, {"population", 76000}, {"minZoom", 7}}},
+                       {"geometry", {{"type", "Point"}, {"coordinates", json::array({31.88, 51.05})}}}}})}};
+    const auto cities = loadCities(collection);
+    check(cities.size() == 2, "two cities");
+    if (cities.size() == 2) {
+        check(cities[0].name == "Київ" && cities[0].kind == CityKind::Capital && cities[0].minZoom == 3.7,
+              "capital properties");
+        check(cities[0].position == lonLatToMap(30.5234, 50.4501), "projected position");
+        check(cities[1].kind == CityKind::Town && cities[1].population == 76000, "town properties");
+    }
+
+    json badKind = collection;
+    badKind["features"][0]["properties"]["kind"] = "village";
+    bool threw = false;
+    try {
+        loadCities(badKind);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    check(threw, "unknown kind throws");
+
+    check(near(webZoomForView(1), 5.2, 1e-12) && near(webZoomForView(4), 7.2, 1e-12),
+          "view zoom to web zoom");
+}
+
 void testTimestamps() {
     check(parseUtcTimestampMs("1970-01-01T00:00:00Z") == 0, "epoch");
     check(parseUtcTimestampMs("2022-04-04T16:45:00Z") == 1649090700000LL, "whole seconds");
@@ -325,6 +359,7 @@ int main() {
         testOverrideRegionGeometry();
         testLabelPoint();
         testMapView();
+        testCities();
         testTimestamps();
         testAlertRegions();
     } catch (const std::exception& error) {

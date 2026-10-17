@@ -11,6 +11,7 @@
 
 #include "heat_cells.hpp"
 #include "heat_renderer.hpp"
+#include "cities.hpp"
 #include "http.hpp"
 #include "live_feed.hpp"
 #include "map_layer.hpp"
@@ -58,6 +59,7 @@ constexpr const char* kGeometryUrl =
 constexpr const char* kGeometryFileName = "regions-standard-v1.geojson";
 // Land outline of Crimea; the site's own outline follows the territorial sea.
 constexpr const char* kCrimeaOverrideFile = ALARMMAP_DATA_DIR "/crimea.geojson";
+constexpr const char* kCitiesFile = ALARMMAP_DATA_DIR "/cities.geojson";
 constexpr const char* kTargetsChannel = "mapTargets_heat_legacy_v2";
 constexpr const char* kTargetsSnapshotUrl =
     "https://map.ukrainealarm.com/api/v2/data/targetsForMapsState/public?separateTracks=false";
@@ -247,6 +249,7 @@ private:
 struct RegionShapes {
     std::vector<RegionShape> coarse;
     std::vector<RegionShape> detailed;
+    std::vector<City> cities;
 };
 
 RegionShapes loadShapes() {
@@ -254,7 +257,8 @@ RegionShapes loadShapes() {
     json regions = readJsonFile(geometryPath);
     overrideRegionGeometry(regions, readJsonFile(kCrimeaOverrideFile));
     RegionShapes shapes{buildRegionShapes(regions, kSimplifyTolerance),
-                        buildRegionShapes(regions, kDetailedTolerance)};
+                        buildRegionShapes(regions, kDetailedTolerance),
+                        loadCities(readJsonFile(kCitiesFile))};
     const auto triangles = [](const std::vector<RegionShape>& level) {
         size_t count = 0;
         for (const auto& shape : level) count += shape.indices.size() / 3;
@@ -272,7 +276,7 @@ public:
     Scene(RegionShapes shapes, const Font& font)
         : shapes_(std::move(shapes)),
           font_(font),
-          mapLayer_(shapes_.coarse, kSimplifyTolerance, shapes_.detailed, font_),
+          mapLayer_(shapes_.coarse, kSimplifyTolerance, shapes_.detailed, shapes_.cities, font_),
           airFilter_(shapes_.coarse) {}
     Scene(const Scene&) = delete;
     Scene& operator=(const Scene&) = delete;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cities.hpp"
 #include "gaussian_blur.hpp"
 #include "map_view.hpp"
 #include "region_geometry.hpp"
@@ -18,7 +19,7 @@ Camera2D viewCamera(const alarmmap::MapView& view, float targetWidth, float targ
 // Camera for the window the view describes.
 Camera2D viewCamera(const alarmmap::MapView& view);
 
-// Region fills, borders, glows and oblast names, rendered into a cached,
+// Region fills, borders, glows, oblast names and cities, rendered into a cached,
 // supersampled texture that extends past the window edges. While the view
 // moves, the old cache is drawn shifted and scaled, and it is re-rendered
 // once the view settles.
@@ -27,9 +28,10 @@ public:
     // Requires an initialised window (an OpenGL context). `coarse` shapes are
     // simplified with `coarseTolerance` map units and drawn while that stays
     // under a pixel; closer in, `detailed` ones are drawn. Keeps references to
-    // the shapes and `font`, which must outlive the layer.
+    // the shapes, `cities` and `font`, which must outlive the layer.
     MapLayer(const std::vector<alarmmap::RegionShape>& coarse, double coarseTolerance,
-             const std::vector<alarmmap::RegionShape>& detailed, const Font& font);
+             const std::vector<alarmmap::RegionShape>& detailed,
+             const std::vector<alarmmap::City>& cities, const Font& font);
     ~MapLayer();
     MapLayer(const MapLayer&) = delete;
     MapLayer& operator=(const MapLayer&) = delete;
@@ -86,11 +88,14 @@ private:
     void drawFills(const Selection& selection, bool alertsOnly, Color color) const;
     void drawBorders(const Selection& selection, const Camera2D& camera, float scale) const;
     void drawGlow(const GlowMasks& masks, Vector4 inner, Vector4 outer) const;
-    void drawLabels(const Camera2D& camera, float scale) const;
+    // Oblast names, then the cities the zoom calls for whose labels fit
+    // without overlapping anything placed before.
+    void drawLabels(const Camera2D& camera, float scale, double viewZoom) const;
 
     std::vector<DrawableRegion> coarse_;
     std::vector<DrawableRegion> detailed_;
     double coarseTolerance_;
+    const std::vector<alarmmap::City>& cities_;
     const Font& font_;
     std::vector<Label> labels_;
     std::set<std::string> alertRegionIds_;

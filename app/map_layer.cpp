@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <string_view>
+#include <tuple>
 #include <utility>
 
 using alarmmap::kHromadaRank;
@@ -67,6 +68,13 @@ constexpr int kTrianglesPerBlock = 1024;
 constexpr float kLabelFontPx = 13;
 constexpr float kLabelSpacingPx = 0.4f;
 constexpr Vector2 kLabelShadowOffsetPx = {0.8f, 1};
+constexpr float kCapitalFontPx = 15;
+constexpr float kRegionalCityFontPx = 13;
+constexpr float kTownFontPx = 12;
+constexpr float kCapitalDotPx = 4.5f;
+constexpr float kRegionalCityDotPx = 3.2f;
+constexpr float kTownDotPx = 2.3f;
+constexpr float kCityLabelGapPx = 4;
 constexpr int kVignetteSize = 512;
 constexpr float kVignetteClearShare = 0.35f;
 
@@ -80,6 +88,10 @@ constexpr Color kVignetteEdge = {0, 0, 0, 130};
 constexpr Color kLabel = {176, 186, 202, 210};
 constexpr Color kHighlight = {255, 70, 55, 255};
 constexpr Color kLabelShadow = {0, 0, 0, 170};
+constexpr Color kCityLabel = {232, 236, 244, 255};
+constexpr Color kTownLabel = {196, 202, 214, 240};
+constexpr Color kCityDot = {236, 240, 248, 255};
+constexpr Color kCityDotOutline = {10, 12, 16, 255};
 constexpr Color kMaskColor = WHITE;
 constexpr Vector4 kNoGlow = {0, 0, 0, 0};
 constexpr Vector4 kCountryHalo = {80 / 255.0f, 120 / 255.0f, 190 / 255.0f, 0.45f};
@@ -162,10 +174,12 @@ bool MapLayer::Selection::covers(const DrawableRegion& region) const {
 }
 
 MapLayer::MapLayer(const std::vector<RegionShape>& coarse, double coarseTolerance,
-                   const std::vector<RegionShape>& detailed, const Font& font)
+                   const std::vector<RegionShape>& detailed, const std::vector<alarmmap::City>& cities,
+                   const Font& font)
     : coarse_(makeDrawable(coarse)),
       detailed_(makeDrawable(detailed)),
       coarseTolerance_(coarseTolerance),
+      cities_(cities),
       font_(font),
       glowShader_(loadFragmentShader(kGlowShader, "edge glow")),
       sharpMaskLocation_(GetShaderLocation(glowShader_, "sharpMask")),
@@ -173,6 +187,8 @@ MapLayer::MapLayer(const std::vector<RegionShape>& coarse, double coarseToleranc
       outerGlowLocation_(GetShaderLocation(glowShader_, "outerGlow")),
       vignette_(makeVignette()) {
     for (const RegionShape& shape : coarse) {
+        // The capital is labelled as a city instead of as a region.
+        if (shape.name == "м. Київ") continue;
         if (shape.rank == kOblastRank && !shape.outlines.empty()) {
             labels_.push_back({shortRegionName(shape.name), toVector(alarmmap::labelPoint(shape))});
         }
@@ -280,17 +296,65 @@ void MapLayer::drawGlow(const GlowMasks& masks, Vector4 inner, Vector4 outer) co
     EndShaderMode();
 }
 
-void MapLayer::drawLabels(const Camera2D& camera, float scale) const {
-    const float size = kLabelFontPx * scale;
+void MapLayer::drawLabels(const Camera2D& camera, float scale, double viewZoom) const {
     const float spacing = kLabelSpacingPx * scale;
+    const Vector2 shadowOffset = {kLabelShadowOffsetPx.x * scale, kLabelShadowOffsetPx.y * scale};
+    const auto drawText = [&](const std::string& text, Vector2 origin, float size, Color color) {
+        DrawTextEx(font_, text.c_str(), {origin.x + shadowOffset.x, origin.y + shadowOffset.y}, size,
+                   spacing, kLabelShadow);
+        DrawTextEx(font_, text.c_str(), origin, size, spacing, color);
+    };
+    std::vector<Rectangle> placed;
+    const auto isFree = [&](const Rectangle& rectangle) {
+        return std::none_of(placed.begin(), placed.end(), [&](const Rectangle& other) {
+            return CheckCollisionRecs(rectangle, other);
+        });
+    };
+
+    const float regionSize = kLabelFontPx * scale;
     for (const Label& label : labels_) {
         const Vector2 anchor = GetWorldToScreen2D(label.position, camera);
-        const Vector2 extent = MeasureTextEx(font_, label.text.c_str(), size, spacing);
+        const Vector2 extent = MeasureTextEx(font_, label.text.c_str(), regionSize, spacing);
         const Vector2 origin = {anchor.x - extent.x / 2, anchor.y - extent.y / 2};
-        DrawTextEx(font_, label.text.c_str(),
-                   {origin.x + kLabelShadowOffsetPx.x * scale, origin.y + kLabelShadowOffsetPx.y * scale},
-                   size, spacing, kLabelShadow);
-        DrawTextEx(font_, label.text.c_str(), origin, size, spacing, kLabel);
+        drawText(label.text, origin, regionSize, kLabel);
+        placed.push_back({origin.x, origin.y, extent.x, extent.y});
+    }
+
+    const double webZoom = alarmmap::webZoomForView(viewZoom);
+    std::vector<const alarmmap::City*> cities;
+    for (const alarmmap::City& city : cities_) {
+        if (city.minZoom <= webZoom) cities.push_back(&city);
+    }
+    std::stable_sort(cities.begin(), cities.end(), [](const auto* left, const auto* right) {
+        const auto priority = [](const alarmmap::City* city) {
+            return std::tuple(city->kind != alarmmap::CityKind::Capital, city->minZoom, -city->population);
+        };
+        return priority(left) < priority(right);
+    });
+    for (const alarmmap::City* city : cities) {
+        const bool capital = city->kind == alarmmap::CityKind::Capital;
+        const bool town = city->kind == alarmmap::CityKind::Town;
+        const float dot = (capital ? kCapitalDotPx : town ? kTownDotPx : kRegionalCityDotPx) * scale;
+        const float size = (capital ? kCapitalFontPx : town ? kTownFontPx : kRegionalCityFontPx) * scale;
+        const Vector2 anchor = GetWorldToScreen2D(toVector(city->position), camera);
+        const Vector2 extent = MeasureTextEx(font_, city->name.c_str(), size, spacing);
+        const Rectangle dotArea = {anchor.x - dot, anchor.y - dot, 2 * dot, 2 * dot};
+        const float gap = dot + kCityLabelGapPx * scale;
+        const Rectangle right = {anchor.x + gap, anchor.y - extent.y / 2, extent.x, extent.y};
+        const Rectangle left = {anchor.x - gap - extent.x, anchor.y - extent.y / 2, extent.x, extent.y};
+        if (!isFree(dotArea)) continue;
+        const Rectangle* label = isFree(right) ? &right : isFree(left) ? &left : nullptr;
+        if (!label) continue;
+
+        DrawCircleV(anchor, dot + scale, kCityDotOutline);
+        DrawCircleV(anchor, dot, kCityDot);
+        if (capital) {
+            DrawCircleV(anchor, dot * 0.55f, kCityDotOutline);
+            DrawCircleV(anchor, dot * 0.3f, kCityDot);
+        }
+        drawText(city->name, {label->x, label->y}, size, town ? kTownLabel : kCityLabel);
+        placed.push_back(dotArea);
+        placed.push_back(*label);
     }
 }
 
@@ -336,7 +400,7 @@ void MapLayer::render(const alarmmap::MapView& view) {
     BeginMode2D(camera);
     drawBorders(selection, camera, kSupersampling);
     EndMode2D();
-    drawLabels(camera, kSupersampling);
+    drawLabels(camera, kSupersampling, view.zoom());
     EndTextureMode();
 }
 
