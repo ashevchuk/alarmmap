@@ -36,7 +36,8 @@ add_library(alarmmap_core STATIC
     src/region_geometry.cpp
     src/target_kind.cpp
     src/target_motion.cpp
-    src/target_snapshot.cpp)
+    src/target_snapshot.cpp
+    src/vector_tile.cpp)
 target_include_directories(alarmmap_core PUBLIC src)
 target_include_directories(alarmmap_core SYSTEM PRIVATE ${earcut_SOURCE_DIR}/include)
 target_link_libraries(alarmmap_core PUBLIC nlohmann_json::nlohmann_json CURL::libcurl)
@@ -59,7 +60,7 @@ target_link_libraries(ws_probe PRIVATE alarmmap_core)
 target_compile_options(ws_probe PRIVATE ${WARNING_FLAGS})
 
 enable_testing()
-foreach(test_name target_snapshot geometry heat)
+foreach(test_name target_snapshot geometry heat basemap)
     add_executable(${test_name}_test tests/${test_name}_test.cpp)
     target_link_libraries(${test_name}_test PRIVATE alarmmap_core)
     target_compile_options(${test_name}_test PRIVATE ${WARNING_FLAGS})
