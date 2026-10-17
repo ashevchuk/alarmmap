@@ -1,6 +1,5 @@
 #include "cities.hpp"
 
-#include <cmath>
 #include <stdexcept>
 
 namespace alarmmap {
@@ -8,8 +7,6 @@ namespace alarmmap {
 using json = nlohmann::json;
 
 namespace {
-
-constexpr double kLabelZoomAtCountryView = 5.2;
 
 CityKind kindOf(const std::string& kind) {
     if (kind == "capital") return CityKind::Capital;
@@ -38,6 +35,5 @@ std::vector<City> loadCities(const json& collection) {
     return cities;
 }
 
-double labelZoomForView(double viewZoom) { return kLabelZoomAtCountryView + std::log2(viewZoom); }
 
 }  // namespace alarmmap

@@ -91,7 +91,7 @@ private:
     void drawGlow(const GlowMasks& masks, Vector4 inner, Vector4 outer) const;
     // Oblast names, then the cities the zoom calls for whose labels fit
     // without overlapping anything placed before.
-    void drawLabels(const Camera2D& camera, float scale, double viewZoom) const;
+    void drawLabels(const Camera2D& camera, float scale, const alarmmap::MapView& view) const;
     // Basemap tiles to draw for the tiles wanted now: each loaded tile, or
     // the nearest loaded ancestor of a missing one; lower zooms first.
     std::vector<std::shared_ptr<const alarmmap::BasemapTile>> tilesToDraw() const;

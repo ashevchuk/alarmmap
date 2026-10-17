@@ -84,11 +84,18 @@ constexpr float kAlertGlowRadiusPx = 10;
 constexpr int kTrianglesPerBlock = 1024;
 constexpr float kLabelFontPx = 13;
 constexpr float kLabelSpacingPx = 0.4f;
-constexpr Vector2 kLabelShadowOffsetPx = {0.8f, 1};
-constexpr float kCapitalFontPx = 15;
-constexpr float kRegionalCityFontPx = 13;
-constexpr float kTownFontPx = 12;
-constexpr float kVillageFontPx = 11;
+// A dark outline around every glyph keeps labels readable over roads,
+// built-up areas and alert fills alike.
+constexpr float kLabelOutlinePx = 1.3f;
+constexpr int kLabelOutlineDirections = 8;
+constexpr float kCapitalFontPx = 18;
+constexpr float kRegionalCityFontPx = 16;
+constexpr float kTownFontPx = 14.5f;
+constexpr float kVillageFontPx = 13;
+// Places become the main landmarks when zoomed in, so their labels grow by
+// this much per doubling of the zoom, up to the maximum.
+constexpr float kCityFontGrowthPx = 1;
+constexpr float kMaxCityFontGrowthPx = 3;
 constexpr float kCapitalDotPx = 4.5f;
 constexpr float kRegionalCityDotPx = 3.2f;
 constexpr float kTownDotPx = 2.3f;
@@ -132,10 +139,10 @@ constexpr Color kHromadaBorder = {44, 50, 60, 255};
 constexpr Color kVignetteEdge = {0, 0, 0, 130};
 constexpr Color kLabel = {176, 186, 202, 210};
 constexpr Color kHighlight = {255, 70, 55, 255};
-constexpr Color kLabelShadow = {0, 0, 0, 170};
-constexpr Color kCityLabel = {232, 236, 244, 255};
-constexpr Color kTownLabel = {196, 202, 214, 240};
-constexpr Color kVillageLabel = {160, 168, 182, 230};
+constexpr Color kLabelOutline = {8, 9, 12, 225};
+constexpr Color kCityLabel = {242, 244, 250, 255};
+constexpr Color kTownLabel = {222, 226, 236, 255};
+constexpr Color kVillageLabel = {196, 202, 214, 255};
 constexpr Color kCityDot = {236, 240, 248, 255};
 constexpr Color kCityDotOutline = {10, 12, 16, 255};
 constexpr Color kMaskColor = WHITE;
@@ -353,14 +360,20 @@ void MapLayer::drawGlow(const GlowMasks& masks, Vector4 inner, Vector4 outer) co
     EndShaderMode();
 }
 
-void MapLayer::drawLabels(const Camera2D& camera, float scale, double viewZoom) const {
+void MapLayer::drawLabels(const Camera2D& camera, float scale, const alarmmap::MapView& view) const {
     const float spacing = kLabelSpacingPx * scale;
-    const Vector2 shadowOffset = {kLabelShadowOffsetPx.x * scale, kLabelShadowOffsetPx.y * scale};
+    const float outline = kLabelOutlinePx * scale;
     const auto drawText = [&](const std::string& text, Vector2 origin, float size, Color color) {
-        DrawTextEx(font_, text.c_str(), {origin.x + shadowOffset.x, origin.y + shadowOffset.y}, size,
-                   spacing, kLabelShadow);
+        for (int i = 0; i < kLabelOutlineDirections; ++i) {
+            const float angle = 2 * PI * i / kLabelOutlineDirections;
+            DrawTextEx(font_, text.c_str(),
+                       {origin.x + outline * std::cos(angle), origin.y + outline * std::sin(angle)}, size,
+                       spacing, kLabelOutline);
+        }
         DrawTextEx(font_, text.c_str(), origin, size, spacing, color);
     };
+    const float cityFontGrowth = static_cast<float>(
+        std::clamp(kCityFontGrowthPx * std::log2(view.zoom()), 0.0, static_cast<double>(kMaxCityFontGrowthPx)));
     std::vector<Rectangle> placed;
     const auto isFree = [&](const Rectangle& rectangle) {
         return std::none_of(placed.begin(), placed.end(), [&](const Rectangle& other) {
@@ -380,12 +393,12 @@ void MapLayer::drawLabels(const Camera2D& camera, float scale, double viewZoom) 
         }
     };
 
-    const double labelZoom = alarmmap::labelZoomForView(viewZoom);
+    const double tileZoom = alarmmap::tileZoomForScale(view.pixelsPerUnit());
     const auto targetWidth = static_cast<float>(cache_.texture.width);
     const auto targetHeight = static_cast<float>(cache_.texture.height);
     std::vector<std::pair<const alarmmap::City*, Vector2>> cities;
     for (const alarmmap::City& city : cities_) {
-        if (city.minZoom > labelZoom) continue;
+        if (city.minZoom > tileZoom) continue;
         const Vector2 anchor = GetWorldToScreen2D(toVector(city.position), camera);
         if (anchor.x < 0 || anchor.y < 0 || anchor.x > targetWidth || anchor.y > targetHeight) continue;
         cities.emplace_back(&city, anchor);
@@ -413,7 +426,8 @@ void MapLayer::drawLabels(const Camera2D& camera, float scale, double viewZoom) 
         const float dot =
             (capital ? kCapitalDotPx : village ? kVillageDotPx : town ? kTownDotPx : kRegionalCityDotPx) * scale;
         const float size =
-            (capital ? kCapitalFontPx : village ? kVillageFontPx : town ? kTownFontPx : kRegionalCityFontPx) *
+            ((capital ? kCapitalFontPx : village ? kVillageFontPx : town ? kTownFontPx : kRegionalCityFontPx) +
+             cityFontGrowth) *
             scale;
         const Vector2 extent = MeasureTextEx(font_, city->name.c_str(), size, spacing);
         const Rectangle dotArea = {anchor.x - dot, anchor.y - dot, 2 * dot, 2 * dot};
@@ -498,7 +512,7 @@ void MapLayer::render(const alarmmap::MapView& view) {
     BeginMode2D(camera);
     drawBorders(selection, camera, kSupersampling);
     EndMode2D();
-    drawLabels(camera, kSupersampling, view.zoom());
+    drawLabels(camera, kSupersampling, view);
     EndTextureMode();
 }
 

@@ -324,8 +324,6 @@ void testCities() {
     }
     check(threw, "unknown kind throws");
 
-    check(near(labelZoomForView(1), 5.2, 1e-12) && near(labelZoomForView(4), 7.2, 1e-12),
-          "view zoom to label zoom");
 }
 
 void testTimestamps() {
