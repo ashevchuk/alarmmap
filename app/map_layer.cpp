@@ -44,6 +44,18 @@ void main() {
 }
 )";
 
+// Darkens everything outside a mask; output is premultiplied by alpha.
+constexpr const char* kDimShader = R"(#version 330
+in vec2 fragTexCoord;
+uniform sampler2D texture0;
+out vec4 finalColor;
+
+void main() {
+    float outside = 1.0 - texture(texture0, fragTexCoord).a;
+    finalColor = vec4(0.0, 0.0, 0.0, 0.62 * outside);
+}
+)";
+
 // Rendering at twice the window size and shrinking with bilinear filtering
 // averages 2x2 samples per pixel: smooth edges without MSAA render targets.
 constexpr float kSupersampling = 2;
@@ -54,6 +66,11 @@ constexpr float kCacheMarginShare = 0.25f;
 // often while it keeps moving.
 constexpr double kSettleSeconds = 0.12;
 constexpr double kMaxStaleSeconds = 0.5;
+// Newly arrived basemap tiles are drawn in batches at most this often.
+constexpr double kTileRedrawSeconds = 0.3;
+constexpr int kMaxTileZoom = 14;
+// How far up the tile pyramid to look for a stand-in for a missing tile.
+constexpr int kAncestorLevels = 4;
 constexpr float kOblastBorderPx = 1.5f;
 constexpr float kRaionBorderPx = 0.8f;
 constexpr float kHromadaBorderPx = 0.6f;
@@ -80,9 +97,35 @@ constexpr float kCityLabelGapPx = 4;
 constexpr int kVignetteSize = 512;
 constexpr float kVignetteClearShare = 0.35f;
 
-constexpr Color kBackground = {14, 17, 22, 255};
-constexpr Color kLand = {32, 37, 46, 255};
-constexpr Color kAlertFill = {84, 22, 30, 255};
+constexpr Color kLandBase = {34, 38, 46, 255};
+constexpr Color kAlertFill = {150, 30, 40, 105};
+// Basemap palette, indexed like kAllBasemapFills and kAllBasemapLines.
+constexpr Color kFillColors[] = {
+    {16, 26, 40, 255},  // water
+    {32, 44, 40, 255},  // wood
+    {30, 40, 44, 255},  // wetland
+    {44, 46, 54, 255},  // residential
+    {47, 45, 53, 255},  // industrial
+};
+struct LineStyle {
+    Color color;
+    float widthPx;
+    // Tile zoom from which the line is drawn.
+    int minZoom;
+};
+constexpr LineStyle kLineStyles[] = {
+    {{44, 72, 104, 255}, 1.4f, 0},    // river
+    {{34, 56, 82, 255}, 0.7f, 11},    // stream
+    {{164, 128, 74, 255}, 1.8f, 0},   // motorway
+    {{146, 118, 76, 255}, 1.5f, 0},   // trunk
+    {{118, 108, 92, 255}, 1.2f, 0},   // primary
+    {{92, 92, 100, 255}, 1.0f, 8},    // secondary
+    {{74, 76, 86, 255}, 0.8f, 10},    // tertiary
+    {{62, 64, 74, 255}, 0.6f, 12},    // minor
+    {{84, 82, 96, 255}, 0.8f, 8},     // rail
+};
+static_assert(std::size(kFillColors) == std::size(alarmmap::kAllBasemapFills));
+static_assert(std::size(kLineStyles) == std::size(alarmmap::kAllBasemapLines));
 constexpr Color kOblastBorder = {125, 135, 150, 255};
 constexpr Color kRaionBorder = {58, 66, 78, 255};
 constexpr Color kHromadaBorder = {44, 50, 60, 255};
@@ -105,19 +148,27 @@ Vector2 toVector(const MapPoint& point) {
     return {static_cast<float>(point.x), static_cast<float>(point.y)};
 }
 
-void drawFill(const RegionShape& shape, Color color) {
-    const size_t triangleCount = shape.indices.size() / 3;
+void drawTriangles(const std::vector<MapPoint>& vertices, const std::vector<std::uint32_t>& indices,
+                   Color color) {
+    const size_t triangleCount = indices.size() / 3;
     for (size_t first = 0; first < triangleCount; first += kTrianglesPerBlock) {
         const size_t last = std::min(triangleCount, first + kTrianglesPerBlock);
         rlCheckRenderBatchLimit(static_cast<int>((last - first) * 3));
         rlBegin(RL_TRIANGLES);
         rlColor4ub(color.r, color.g, color.b, color.a);
         for (size_t index = first * 3; index < last * 3; ++index) {
-            const MapPoint& vertex = shape.vertices[shape.indices[index]];
+            const MapPoint& vertex = vertices[indices[index]];
             rlVertex2f(static_cast<float>(vertex.x), static_cast<float>(vertex.y));
         }
         rlEnd();
     }
+}
+
+void drawFill(const RegionShape& shape, Color color) { drawTriangles(shape.vertices, shape.indices, color); }
+
+int tileZoomFor(const alarmmap::MapView& view) {
+    return std::clamp(static_cast<int>(std::floor(alarmmap::tileZoomForScale(view.pixelsPerUnit()))), 0,
+                      kMaxTileZoom);
 }
 
 std::string shortRegionName(const std::string& name) {
@@ -178,11 +229,13 @@ bool MapLayer::Selection::covers(const DrawableRegion& region) const {
 
 MapLayer::MapLayer(const std::vector<RegionShape>& coarse, double coarseTolerance,
                    const std::vector<RegionShape>& detailed, const std::vector<alarmmap::City>& cities,
-                   const Font& font)
+                   alarmmap::TileStore& tiles, const Font& font)
     : coarse_(makeDrawable(coarse)),
       detailed_(makeDrawable(detailed)),
       coarseTolerance_(coarseTolerance),
       cities_(cities),
+      tiles_(tiles),
+      dimShader_(loadFragmentShader(kDimShader, "outside dimming")),
       font_(font),
       glowShader_(loadFragmentShader(kGlowShader, "edge glow")),
       sharpMaskLocation_(GetShaderLocation(glowShader_, "sharpMask")),
@@ -218,6 +271,7 @@ MapLayer::~MapLayer() {
     }
     UnloadTexture(vignette_);
     UnloadShader(glowShader_);
+    UnloadShader(dimShader_);
 }
 
 void MapLayer::setAlertRegions(const std::set<std::string>* regionIds) {
@@ -393,6 +447,19 @@ void MapLayer::prepare(const alarmmap::MapView& view, double now) {
         pendingView_ = view;
         pendingSince_ = now;
     }
+    // Ask for the tiles of the current view right away, so they download
+    // while the view is still settling.
+    const double halfWidth = view.width() * (0.5 + kCacheMarginShare) / view.pixelsPerUnit();
+    const double halfHeight = view.height() * (0.5 + kCacheMarginShare) / view.pixelsPerUnit();
+    const MapPoint center = view.center();
+    std::vector<alarmmap::TileId> wanted =
+        alarmmap::tilesCovering({center.x - halfWidth, center.y - halfHeight},
+                                {center.x + halfWidth, center.y + halfHeight}, tileZoomFor(view));
+    if (wanted != wantedTiles_) {
+        tiles_.want(wanted);
+        wantedTiles_ = std::move(wanted);
+    }
+    if (tiles_.version() != renderedTilesVersion_ && now - renderedAt_ >= kTileRedrawSeconds) dirty_ = true;
     if (!(view == renderedView_) &&
         (now - pendingSince_ >= kSettleSeconds || now - renderedAt_ >= kMaxStaleSeconds)) {
         dirty_ = true;
@@ -415,11 +482,16 @@ void MapLayer::render(const alarmmap::MapView& view) {
 
     const Camera2D camera = viewCamera(view, static_cast<float>(cache_.texture.width),
                                        static_cast<float>(cache_.texture.height), kSupersampling);
+    renderedTilesVersion_ = tiles_.version();
+    const auto basemap = tilesToDraw();
     BeginTextureMode(cache_);
-    ClearBackground(kBackground);
+    ClearBackground(kLandBase);
+    BeginMode2D(camera);
+    drawBasemap(basemap, camera, kSupersampling, view.zoom());
+    EndMode2D();
+    drawOutsideDimming();
     drawGlow(country_, kNoGlow, kCountryHalo);
     BeginMode2D(camera);
-    drawFills(selection, false, kLand);
     drawFills(selection, true, kAlertFill);
     EndMode2D();
     if (hasAlerts) drawGlow(alerts_, kAlertInnerGlow, kAlertOuterGlow);
@@ -428,6 +500,57 @@ void MapLayer::render(const alarmmap::MapView& view) {
     EndMode2D();
     drawLabels(camera, kSupersampling, view.zoom());
     EndTextureMode();
+}
+
+std::vector<std::shared_ptr<const alarmmap::BasemapTile>> MapLayer::tilesToDraw() const {
+    std::vector<std::shared_ptr<const alarmmap::BasemapTile>> result;
+    std::set<alarmmap::TileId> chosen;
+    for (const alarmmap::TileId& wanted : wantedTiles_) {
+        alarmmap::TileId id = wanted;
+        for (int level = 0; level <= kAncestorLevels && id.z >= 0; ++level) {
+            if (auto tile = tiles_.get(id)) {
+                if (chosen.insert(id).second) result.push_back(std::move(tile));
+                break;
+            }
+            id = {id.z - 1, id.x / 2, id.y / 2};
+        }
+    }
+    std::stable_sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a->id.z < b->id.z; });
+    return result;
+}
+
+void MapLayer::drawBasemap(const std::vector<std::shared_ptr<const alarmmap::BasemapTile>>& tiles,
+                           const Camera2D& camera, float scale, double viewZoom) const {
+    for (size_t fill = 0; fill < std::size(kFillColors); ++fill) {
+        for (const auto& tile : tiles) {
+            const alarmmap::FillMesh& mesh = tile->fills[fill];
+            drawTriangles(mesh.vertices, mesh.indices, kFillColors[fill]);
+        }
+    }
+    // Lines widen a little as the view zooms in.
+    const float widthScale = static_cast<float>(std::clamp(1 + 0.25 * std::log2(viewZoom), 1.0, 2.2));
+    std::vector<Vector2> points;
+    for (size_t line = 0; line < std::size(kLineStyles); ++line) {
+        const LineStyle& style = kLineStyles[line];
+        for (const auto& tile : tiles) {
+            if (tile->id.z < style.minZoom) continue;
+            for (const auto& polyline : tile->lines[line]) {
+                points.clear();
+                for (const MapPoint& point : polyline) points.push_back(toVector(point));
+                DrawSplineLinear(points.data(), static_cast<int>(points.size()),
+                                 style.widthPx * widthScale * scale / camera.zoom, style.color);
+            }
+        }
+    }
+}
+
+void MapLayer::drawOutsideDimming() const {
+    BeginShaderMode(dimShader_);
+    BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
+    drawTargetStretched(country_.sharp, static_cast<float>(cache_.texture.width),
+                        static_cast<float>(cache_.texture.height));
+    EndBlendMode();
+    EndShaderMode();
 }
 
 void MapLayer::drawVignette(float width, float height) const {

@@ -24,6 +24,7 @@
 #include "target_kind.hpp"
 #include "target_motion.hpp"
 #include "target_snapshot.hpp"
+#include "tile_store.hpp"
 #include "ui_font.hpp"
 
 #include <curl/curl.h>
@@ -60,6 +61,7 @@ constexpr const char* kGeometryFileName = "regions-standard-v1.geojson";
 // Land outline of Crimea; the site's own outline follows the territorial sea.
 constexpr const char* kCrimeaOverrideFile = ALARMMAP_DATA_DIR "/crimea.geojson";
 constexpr const char* kCitiesFile = ALARMMAP_DATA_DIR "/cities.geojson";
+constexpr const char* kTileJsonUrl = "https://tiles.openfreemap.org/planet";
 constexpr const char* kTargetsChannel = "mapTargets_heat_legacy_v2";
 constexpr const char* kTargetsSnapshotUrl =
     "https://map.ukrainealarm.com/api/v2/data/targetsForMapsState/public?separateTracks=false";
@@ -122,7 +124,8 @@ constexpr Color kScreenClear = BLACK;
 constexpr Color kCreditsColor = {120, 128, 142, 200};
 constexpr float kCreditsFontPx = 12;
 // GeoNames data is CC BY 4.0, which requires naming the source.
-constexpr const char* kCreditsText = "Дані: map.ukrainealarm.com · GeoNames (CC BY 4.0) · Natural Earth";
+constexpr const char* kCreditsText =
+    "Дані: map.ukrainealarm.com · OpenFreeMap © OpenMapTiles © OpenStreetMap · GeoNames (CC BY 4.0) · Natural Earth";
 
 // Summary panel rows, most dangerous first.
 constexpr std::pair<TargetKind, const char*> kKindLabels[] = {
@@ -277,10 +280,11 @@ RegionShapes loadShapes() {
 // is neither copied nor moved.
 class Scene {
 public:
-    Scene(RegionShapes shapes, const Font& font)
+    Scene(RegionShapes shapes, const Font& font, const fs::path& tileCache)
         : shapes_(std::move(shapes)),
           font_(font),
-          mapLayer_(shapes_.coarse, kSimplifyTolerance, shapes_.detailed, shapes_.cities, font_),
+          tiles_({kTileJsonUrl, tileCache, {}}),
+          mapLayer_(shapes_.coarse, kSimplifyTolerance, shapes_.detailed, shapes_.cities, tiles_, font_),
           airFilter_(shapes_.coarse) {}
     Scene(const Scene&) = delete;
     Scene& operator=(const Scene&) = delete;
@@ -485,6 +489,7 @@ private:
 
     RegionShapes shapes_;
     const Font& font_;
+    TileStore tiles_;
     MapLayer mapLayer_;
     AirAlertFilter airFilter_;
     std::optional<RegionAlerts> alerts_;
@@ -713,7 +718,7 @@ int run(const Options& options) {
         // GPU resources must be created after the window opens and released
         // before it closes.
         const UiFont font;
-        Scene scene(std::move(shapes), font.get());
+        Scene scene(std::move(shapes), font.get(), cacheDirectory() / "tiles");
         if (!isLive(options)) scene.apply(fileTargets, fileAlerts, nowSeconds());
         HeatRenderer heat;
         const TargetIcons icons;

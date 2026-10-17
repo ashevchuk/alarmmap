@@ -3,6 +3,7 @@
 #include "cities.hpp"
 #include "gaussian_blur.hpp"
 #include "map_view.hpp"
+#include "tile_store.hpp"
 #include "region_geometry.hpp"
 
 #include <raylib.h>
@@ -31,7 +32,7 @@ public:
     // the shapes, `cities` and `font`, which must outlive the layer.
     MapLayer(const std::vector<alarmmap::RegionShape>& coarse, double coarseTolerance,
              const std::vector<alarmmap::RegionShape>& detailed,
-             const std::vector<alarmmap::City>& cities, const Font& font);
+             const std::vector<alarmmap::City>& cities, alarmmap::TileStore& tiles, const Font& font);
     ~MapLayer();
     MapLayer(const MapLayer&) = delete;
     MapLayer& operator=(const MapLayer&) = delete;
@@ -91,11 +92,21 @@ private:
     // Oblast names, then the cities the zoom calls for whose labels fit
     // without overlapping anything placed before.
     void drawLabels(const Camera2D& camera, float scale, double viewZoom) const;
+    // Basemap tiles to draw for the tiles wanted now: each loaded tile, or
+    // the nearest loaded ancestor of a missing one; lower zooms first.
+    std::vector<std::shared_ptr<const alarmmap::BasemapTile>> tilesToDraw() const;
+    void drawBasemap(const std::vector<std::shared_ptr<const alarmmap::BasemapTile>>& tiles,
+                     const Camera2D& camera, float scale, double viewZoom) const;
+    void drawOutsideDimming() const;
 
     std::vector<DrawableRegion> coarse_;
     std::vector<DrawableRegion> detailed_;
     double coarseTolerance_;
     const std::vector<alarmmap::City>& cities_;
+    alarmmap::TileStore& tiles_;
+    std::vector<alarmmap::TileId> wantedTiles_;
+    std::uint64_t renderedTilesVersion_ = 0;
+    Shader dimShader_{};
     const Font& font_;
     std::vector<Label> labels_;
     std::set<std::string> alertRegionIds_;
