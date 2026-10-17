@@ -24,9 +24,12 @@ Camera2D viewCamera(const alarmmap::MapView& view);
 // once the view settles.
 class MapLayer {
 public:
-    // Requires an initialised window (an OpenGL context). Keeps references
-    // to `shapes` and `font`, which must outlive the layer.
-    MapLayer(const std::vector<alarmmap::RegionShape>& shapes, const Font& font);
+    // Requires an initialised window (an OpenGL context). `coarse` shapes are
+    // simplified with `coarseTolerance` map units and drawn while that stays
+    // under a pixel; closer in, `detailed` ones are drawn. Keeps references to
+    // the shapes and `font`, which must outlive the layer.
+    MapLayer(const std::vector<alarmmap::RegionShape>& coarse, double coarseTolerance,
+             const std::vector<alarmmap::RegionShape>& detailed, const Font& font);
     ~MapLayer();
     MapLayer(const MapLayer&) = delete;
     MapLayer& operator=(const MapLayer&) = delete;
@@ -52,6 +55,16 @@ private:
         std::vector<std::vector<Vector2>> closedOutlines;
     };
 
+    // Regions of one detail level that intersect an area of the map.
+    struct Selection {
+        const std::vector<DrawableRegion>* regions;
+        alarmmap::MapPoint min;
+        alarmmap::MapPoint max;
+        bool showHromadaBorders;
+
+        bool covers(const DrawableRegion& region) const;
+    };
+
     struct Label {
         std::string text;
         Vector2 position;
@@ -65,13 +78,19 @@ private:
 
     void resize(int width, int height);
     void render(const alarmmap::MapView& view);
-    void renderMask(const GlowMasks& masks, const Camera2D& camera, bool alertsOnly, float blurRadius);
-    void drawFills(bool alertsOnly, Color color) const;
-    void drawBorders(const Camera2D& camera, float scale) const;
+    static std::vector<DrawableRegion> makeDrawable(const std::vector<alarmmap::RegionShape>& shapes);
+    // Regions to draw for `view` within the given distances from its centre.
+    Selection select(const alarmmap::MapView& view, double halfWidthPx, double halfHeightPx) const;
+    void renderMask(const GlowMasks& masks, const Selection& selection, const Camera2D& camera,
+                    bool alertsOnly, float blurRadius);
+    void drawFills(const Selection& selection, bool alertsOnly, Color color) const;
+    void drawBorders(const Selection& selection, const Camera2D& camera, float scale) const;
     void drawGlow(const GlowMasks& masks, Vector4 inner, Vector4 outer) const;
     void drawLabels(const Camera2D& camera, float scale) const;
 
-    std::vector<DrawableRegion> regions_;
+    std::vector<DrawableRegion> coarse_;
+    std::vector<DrawableRegion> detailed_;
+    double coarseTolerance_;
     const Font& font_;
     std::vector<Label> labels_;
     std::set<std::string> alertRegionIds_;

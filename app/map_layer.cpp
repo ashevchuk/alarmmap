@@ -55,6 +55,11 @@ constexpr double kSettleSeconds = 0.12;
 constexpr double kMaxStaleSeconds = 0.5;
 constexpr float kOblastBorderPx = 1.5f;
 constexpr float kRaionBorderPx = 0.8f;
+constexpr float kHromadaBorderPx = 0.6f;
+// Hromadas are too small to outline on the whole-country view.
+constexpr double kHromadaBordersMinZoom = 4;
+// Largest simplification error, in screen pixels, the coarse shapes may show.
+constexpr double kMaxSimplificationPx = 0.6;
 constexpr float kCountryHaloRadiusPx = 26;
 constexpr float kAlertGlowRadiusPx = 10;
 // Triangles per rlBegin/rlEnd block; keeps every block inside one render batch.
@@ -70,6 +75,7 @@ constexpr Color kLand = {32, 37, 46, 255};
 constexpr Color kAlertFill = {84, 22, 30, 255};
 constexpr Color kOblastBorder = {125, 135, 150, 255};
 constexpr Color kRaionBorder = {58, 66, 78, 255};
+constexpr Color kHromadaBorder = {44, 50, 60, 255};
 constexpr Color kVignetteEdge = {0, 0, 0, 130};
 constexpr Color kLabel = {176, 186, 202, 210};
 constexpr Color kHighlight = {255, 70, 55, 255};
@@ -135,13 +141,8 @@ Camera2D viewCamera(const alarmmap::MapView& view) {
     return viewCamera(view, static_cast<float>(view.width()), static_cast<float>(view.height()));
 }
 
-MapLayer::MapLayer(const std::vector<RegionShape>& shapes, const Font& font)
-    : font_(font),
-      glowShader_(loadFragmentShader(kGlowShader, "edge glow")),
-      sharpMaskLocation_(GetShaderLocation(glowShader_, "sharpMask")),
-      innerGlowLocation_(GetShaderLocation(glowShader_, "innerGlow")),
-      outerGlowLocation_(GetShaderLocation(glowShader_, "outerGlow")),
-      vignette_(makeVignette()) {
+std::vector<MapLayer::DrawableRegion> MapLayer::makeDrawable(const std::vector<RegionShape>& shapes) {
+    std::vector<DrawableRegion> regions;
     for (const RegionShape& shape : shapes) {
         DrawableRegion region{&shape, {}};
         for (const auto& ring : shape.outlines) {
@@ -149,11 +150,44 @@ MapLayer::MapLayer(const std::vector<RegionShape>& shapes, const Font& font)
             for (const MapPoint& point : ring) points.push_back(toVector(point));
             points.push_back(points.front());
         }
-        regions_.push_back(std::move(region));
+        regions.push_back(std::move(region));
+    }
+    return regions;
+}
+
+bool MapLayer::Selection::covers(const DrawableRegion& region) const {
+    const RegionShape& shape = *region.shape;
+    return shape.boundsMax.x >= min.x && shape.boundsMin.x <= max.x && shape.boundsMax.y >= min.y &&
+           shape.boundsMin.y <= max.y;
+}
+
+MapLayer::MapLayer(const std::vector<RegionShape>& coarse, double coarseTolerance,
+                   const std::vector<RegionShape>& detailed, const Font& font)
+    : coarse_(makeDrawable(coarse)),
+      detailed_(makeDrawable(detailed)),
+      coarseTolerance_(coarseTolerance),
+      font_(font),
+      glowShader_(loadFragmentShader(kGlowShader, "edge glow")),
+      sharpMaskLocation_(GetShaderLocation(glowShader_, "sharpMask")),
+      innerGlowLocation_(GetShaderLocation(glowShader_, "innerGlow")),
+      outerGlowLocation_(GetShaderLocation(glowShader_, "outerGlow")),
+      vignette_(makeVignette()) {
+    for (const RegionShape& shape : coarse) {
         if (shape.rank == kOblastRank && !shape.outlines.empty()) {
             labels_.push_back({shortRegionName(shape.name), toVector(alarmmap::labelPoint(shape))});
         }
     }
+}
+
+MapLayer::Selection MapLayer::select(const alarmmap::MapView& view, double halfWidthPx,
+                                     double halfHeightPx) const {
+    const double scale = view.pixelsPerUnit();
+    const bool coarseIsFineEnough = coarseTolerance_ * scale <= kMaxSimplificationPx;
+    const MapPoint center = view.center();
+    return {coarseIsFineEnough ? &coarse_ : &detailed_,
+            {center.x - halfWidthPx / scale, center.y - halfHeightPx / scale},
+            {center.x + halfWidthPx / scale, center.y + halfHeightPx / scale},
+            view.zoom() >= kHromadaBordersMinZoom};
 }
 
 MapLayer::~MapLayer() {
@@ -193,11 +227,11 @@ void MapLayer::resize(int width, int height) {
     dirty_ = true;
 }
 
-void MapLayer::drawFills(bool alertsOnly, Color color) const {
+void MapLayer::drawFills(const Selection& selection, bool alertsOnly, Color color) const {
     // Coarser regions first, so a district alert stays visible over its oblast.
     for (int rank = kOblastRank; rank <= kHromadaRank; ++rank) {
-        for (const DrawableRegion& region : regions_) {
-            if (region.shape->rank != rank) continue;
+        for (const DrawableRegion& region : *selection.regions) {
+            if (region.shape->rank != rank || !selection.covers(region)) continue;
             if (alertsOnly ? alertRegionIds_.contains(region.shape->id) : rank == kOblastRank) {
                 drawFill(*region.shape, color);
             }
@@ -205,29 +239,30 @@ void MapLayer::drawFills(bool alertsOnly, Color color) const {
     }
 }
 
-void MapLayer::renderMask(const GlowMasks& masks, const Camera2D& camera, bool alertsOnly,
-                          float blurRadius) {
+void MapLayer::renderMask(const GlowMasks& masks, const Selection& selection, const Camera2D& camera,
+                          bool alertsOnly, float blurRadius) {
     for (const RenderTexture2D* target : {&masks.sharp, &masks.blurred}) {
         BeginTextureMode(*target);
         ClearBackground(BLANK);
         BeginMode2D(camera);
-        drawFills(alertsOnly, kMaskColor);
+        drawFills(selection, alertsOnly, kMaskColor);
         EndMode2D();
         EndTextureMode();
     }
     blur_.apply(masks.blurred, blurRadius);
 }
 
-void MapLayer::drawBorders(const Camera2D& camera, float scale) const {
+void MapLayer::drawBorders(const Selection& selection, const Camera2D& camera, float scale) const {
     const auto drawRank = [&](int rank, float widthPx, Color color) {
-        for (const DrawableRegion& region : regions_) {
-            if (region.shape->rank != rank) continue;
+        for (const DrawableRegion& region : *selection.regions) {
+            if (region.shape->rank != rank || !selection.covers(region)) continue;
             for (const auto& outline : region.closedOutlines) {
                 DrawSplineLinear(outline.data(), static_cast<int>(outline.size()),
                                  widthPx * scale / camera.zoom, color);
             }
         }
     };
+    if (selection.showHromadaBorders) drawRank(kHromadaRank, kHromadaBorderPx, kHromadaBorder);
     drawRank(kRaionRank, kRaionBorderPx, kRaionBorder);
     drawRank(kOblastRank, kOblastBorderPx, kOblastBorder);
 }
@@ -283,9 +318,10 @@ void MapLayer::render(const alarmmap::MapView& view) {
     const auto maskWidth = static_cast<float>(country_.sharp.texture.width);
     const auto maskHeight = static_cast<float>(country_.sharp.texture.height);
     const Camera2D maskCamera = viewCamera(view, maskWidth, maskHeight);
-    renderMask(country_, maskCamera, false, kCountryHaloRadiusPx);
+    const Selection selection = select(view, maskWidth / 2, maskHeight / 2);
+    renderMask(country_, selection, maskCamera, false, kCountryHaloRadiusPx);
     const bool hasAlerts = !alertRegionIds_.empty();
-    if (hasAlerts) renderMask(alerts_, maskCamera, true, kAlertGlowRadiusPx);
+    if (hasAlerts) renderMask(alerts_, selection, maskCamera, true, kAlertGlowRadiusPx);
 
     const Camera2D camera = viewCamera(view, static_cast<float>(cache_.texture.width),
                                        static_cast<float>(cache_.texture.height), kSupersampling);
@@ -293,12 +329,12 @@ void MapLayer::render(const alarmmap::MapView& view) {
     ClearBackground(kBackground);
     drawGlow(country_, kNoGlow, kCountryHalo);
     BeginMode2D(camera);
-    drawFills(false, kLand);
-    drawFills(true, kAlertFill);
+    drawFills(selection, false, kLand);
+    drawFills(selection, true, kAlertFill);
     EndMode2D();
     if (hasAlerts) drawGlow(alerts_, kAlertInnerGlow, kAlertOuterGlow);
     BeginMode2D(camera);
-    drawBorders(camera, kSupersampling);
+    drawBorders(selection, camera, kSupersampling);
     EndMode2D();
     drawLabels(camera, kSupersampling);
     EndTextureMode();
@@ -312,10 +348,11 @@ void MapLayer::drawVignette(float width, float height) const {
 void MapLayer::drawHighlights(const std::map<std::string, float>& opacityByRegion,
                               const alarmmap::MapView& view) const {
     if (opacityByRegion.empty()) return;
+    const Selection selection = select(view, view.width() / 2, view.height() / 2);
     BeginMode2D(viewCamera(view));
     for (int rank = kOblastRank; rank <= kHromadaRank; ++rank) {
-        for (const DrawableRegion& region : regions_) {
-            if (region.shape->rank != rank) continue;
+        for (const DrawableRegion& region : *selection.regions) {
+            if (region.shape->rank != rank || !selection.covers(region)) continue;
             const auto opacity = opacityByRegion.find(region.shape->id);
             if (opacity != opacityByRegion.end()) drawFill(*region.shape, Fade(kHighlight, opacity->second));
         }

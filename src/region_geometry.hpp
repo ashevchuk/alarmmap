@@ -24,6 +24,9 @@ struct RegionShape {
     std::vector<std::uint32_t> indices;
     // Closed rings (outer borders and holes); the first point is not repeated.
     std::vector<std::vector<MapPoint>> outlines;
+    // Bounding box of the outlines.
+    MapPoint boundsMin;
+    MapPoint boundsMax;
     // Unsimplified polygons, each an outer ring followed by its holes, for
     // exact hit tests; always the site's geometry, even when the drawn one
     // is overridden.

@@ -65,8 +65,11 @@ constexpr const char* kAlertsChannel = "updateMap";
 constexpr const char* kAlertsSnapshotUrl = "https://map.ukrainealarm.com/api/v2/data/mapUpdate";
 constexpr auto kScreenshotDataTimeout = std::chrono::seconds(30);
 constexpr auto kScreenshotPollInterval = std::chrono::milliseconds(100);
-// About 240 m on the ground: under one pixel even with the country on a 4K screen.
+// About 240 m on the ground: under one pixel even with the country on a 4K
+// screen. Zoomed in, the detailed shapes take over; the source data itself
+// has a resolution of roughly 0.01 map units, so finer would change nothing.
 constexpr double kSimplifyTolerance = 0.05;
+constexpr double kDetailedTolerance = 0.002;
 
 // Animations here are slow (20 s glides, multi-second fades); 30 frames per
 // second look the same as 60 at half the cost. Panning and zooming get 60
@@ -241,14 +244,24 @@ private:
     Texture2D halo_{};
 };
 
-std::vector<RegionShape> loadShapes() {
+struct RegionShapes {
+    std::vector<RegionShape> coarse;
+    std::vector<RegionShape> detailed;
+};
+
+RegionShapes loadShapes() {
     const fs::path geometryPath = ensureGeometryFile();
     json regions = readJsonFile(geometryPath);
     overrideRegionGeometry(regions, readJsonFile(kCrimeaOverrideFile));
-    std::vector<RegionShape> shapes = buildRegionShapes(regions, kSimplifyTolerance);
-    size_t triangles = 0;
-    for (const auto& shape : shapes) triangles += shape.indices.size() / 3;
-    std::cout << "regions=" << shapes.size() << " triangles=" << triangles << '\n';
+    RegionShapes shapes{buildRegionShapes(regions, kSimplifyTolerance),
+                        buildRegionShapes(regions, kDetailedTolerance)};
+    const auto triangles = [](const std::vector<RegionShape>& level) {
+        size_t count = 0;
+        for (const auto& shape : level) count += shape.indices.size() / 3;
+        return count;
+    };
+    std::cout << "regions=" << shapes.coarse.size() << " triangles=" << triangles(shapes.coarse) << '/'
+              << triangles(shapes.detailed) << '\n';
     return shapes;
 }
 
@@ -256,8 +269,11 @@ std::vector<RegionShape> loadShapes() {
 // is neither copied nor moved.
 class Scene {
 public:
-    Scene(std::vector<RegionShape> shapes, const Font& font)
-        : shapes_(std::move(shapes)), font_(font), mapLayer_(shapes_, font_), airFilter_(shapes_) {}
+    Scene(RegionShapes shapes, const Font& font)
+        : shapes_(std::move(shapes)),
+          font_(font),
+          mapLayer_(shapes_.coarse, kSimplifyTolerance, shapes_.detailed, font_),
+          airFilter_(shapes_.coarse) {}
     Scene(const Scene&) = delete;
     Scene& operator=(const Scene&) = delete;
 
@@ -451,7 +467,7 @@ private:
                    kTextSpacingPx, Fade(kBadgeText, opacity));
     }
 
-    std::vector<RegionShape> shapes_;
+    RegionShapes shapes_;
     const Font& font_;
     MapLayer mapLayer_;
     AirAlertFilter airFilter_;
@@ -647,7 +663,7 @@ void saveScreenshot(Scene& scene, HeatRenderer& heat, const TargetIcons& icons,
 }
 
 int run(const Options& options) {
-    std::vector<RegionShape> shapes = loadShapes();
+    RegionShapes shapes = loadShapes();
     std::optional<TargetSnapshot> fileTargets;
     std::optional<RegionAlerts> fileAlerts;
     if (options.targets) fileTargets = decodeTargetSnapshot(readJsonFile(*options.targets));

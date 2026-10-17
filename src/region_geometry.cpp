@@ -216,6 +216,15 @@ std::vector<RegionShape> buildRegionShapes(const json& geojson, double tolerance
                 shape.indices.push_back(base + index);
             }
         }
+        if (!shape.outlines.empty()) {
+            shape.boundsMin = shape.boundsMax = shape.outlines.front().front();
+            for (const auto& ring : shape.outlines) {
+                for (const MapPoint& point : ring) {
+                    shape.boundsMin = {std::min(shape.boundsMin.x, point.x), std::min(shape.boundsMin.y, point.y)};
+                    shape.boundsMax = {std::max(shape.boundsMax.x, point.x), std::max(shape.boundsMax.y, point.y)};
+                }
+            }
+        }
         shapes.push_back(std::move(shape));
     }
     return shapes;

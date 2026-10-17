@@ -126,6 +126,10 @@ void testBuildShapes() {
 
     const RegionShape& holed = shapes[0];
     check(holed.id == "7" && holed.rank == kOblastRank && holed.name == "region 7", "properties");
+    const MapPoint corner = lonLatToMap(30, 49), opposite = lonLatToMap(31, 48);
+    check(near(holed.boundsMin.x, corner.x, 1e-9) && near(holed.boundsMin.y, corner.y, 1e-9) &&
+              near(holed.boundsMax.x, opposite.x, 1e-9) && near(holed.boundsMax.y, opposite.y, 1e-9),
+          "bounds span the outer ring");
     check(holed.outlines.size() == 2, "outer ring and hole outlines");
     if (holed.outlines.size() == 2) {
         const double expected = ringArea(holed.outlines[0]) - ringArea(holed.outlines[1]);
