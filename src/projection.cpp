@@ -44,4 +44,31 @@ MapPoint lonLatToMap(double longitude, double latitude) {
 
 MapPoint normalizedToMap(double x, double y) { return {x * kMapWidth, y * kMapHeight}; }
 
+namespace {
+
+constexpr double kTilePixels = 256;
+
+double westRadians() { return toRadians(kWest); }
+
+}  // namespace
+
+MapPoint worldToMap(double x, double y) {
+    const double longitudeRadians = x * 2 * std::numbers::pi - std::numbers::pi;
+    const double mercator = std::numbers::pi * (1 - 2 * y);
+    return {kFit.offsetX + (longitudeRadians - westRadians()) * kFit.scale,
+            kFit.offsetY + (mercatorY(kNorth) - mercator) * kFit.scale};
+}
+
+MapPoint mapToWorld(MapPoint point) {
+    const double longitudeRadians = (point.x - kFit.offsetX) / kFit.scale + westRadians();
+    const double mercator = mercatorY(kNorth) - (point.y - kFit.offsetY) / kFit.scale;
+    return {(longitudeRadians + std::numbers::pi) / (2 * std::numbers::pi),
+            (1 - mercator / std::numbers::pi) / 2};
+}
+
+double tileZoomForScale(double pixelsPerMapUnit) {
+    const double pixelsPerWorld = pixelsPerMapUnit * 2 * std::numbers::pi * kFit.scale;
+    return std::log2(pixelsPerWorld / kTilePixels);
+}
+
 }  // namespace alarmmap

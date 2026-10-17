@@ -326,12 +326,12 @@ void MapLayer::drawLabels(const Camera2D& camera, float scale, double viewZoom) 
         }
     };
 
-    const double webZoom = alarmmap::webZoomForView(viewZoom);
+    const double labelZoom = alarmmap::labelZoomForView(viewZoom);
     const auto targetWidth = static_cast<float>(cache_.texture.width);
     const auto targetHeight = static_cast<float>(cache_.texture.height);
     std::vector<std::pair<const alarmmap::City*, Vector2>> cities;
     for (const alarmmap::City& city : cities_) {
-        if (city.minZoom > webZoom) continue;
+        if (city.minZoom > labelZoom) continue;
         const Vector2 anchor = GetWorldToScreen2D(toVector(city.position), camera);
         if (anchor.x < 0 || anchor.y < 0 || anchor.x > targetWidth || anchor.y > targetHeight) continue;
         cities.emplace_back(&city, anchor);

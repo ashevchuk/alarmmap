@@ -15,7 +15,7 @@ struct City {
     std::string name;
     CityKind kind = CityKind::Town;
     double population = 0;
-    // Web-map zoom level from which the place is shown.
+    // Level of labelZoomForView() from which the place is shown.
     double minZoom = 0;
     MapPoint position;
 };
@@ -24,9 +24,10 @@ struct City {
 // std::runtime_error on malformed features.
 std::vector<City> loadCities(const nlohmann::json& collection);
 
-// Web-map zoom level equivalent to a view zoom, to compare with City::minZoom.
-// The whole country in a window corresponds to about web zoom 5.2, and
-// every doubling of the view zoom adds one level.
-double webZoomForView(double viewZoom);
+// Label density level of a view zoom, to compare with City::minZoom: 5.2
+// for the whole country, one more per doubling of the view zoom. It is the
+// scale the place thresholds were tuned on, not a web-map tile zoom (that
+// would be about 6.8 for the whole country in a 1600-pixel window).
+double labelZoomForView(double viewZoom);
 
 }  // namespace alarmmap

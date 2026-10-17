@@ -24,6 +24,7 @@ set(WARNING_FLAGS -Wall -Wextra -Wpedantic)
 
 add_library(alarmmap_core STATIC
     src/base64url.cpp
+    src/basemap.cpp
     src/cities.cpp
     src/heat_cells.cpp
     src/heat_timing.cpp
@@ -37,6 +38,7 @@ add_library(alarmmap_core STATIC
     src/target_kind.cpp
     src/target_motion.cpp
     src/target_snapshot.cpp
+    src/tile_store.cpp
     src/vector_tile.cpp)
 target_include_directories(alarmmap_core PUBLIC src)
 target_include_directories(alarmmap_core SYSTEM PRIVATE ${earcut_SOURCE_DIR}/include)

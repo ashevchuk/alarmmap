@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <numbers>
 #include <iostream>
 #include <source_location>
 #include <stdexcept>
@@ -84,6 +85,21 @@ void testProjectionMatchesSite() {
                   std::to_string(sample.latitude));
     }
     check(normalizedToMap(0.5, 1) == MapPoint{kMapWidth / 2, kMapHeight}, "normalized scaling");
+
+    // Kyiv on the Web Mercator world square, computed independently.
+    const double kyivWorldX = (30.5234 + 180) / 360;
+    const double kyivWorldY =
+        (1 - std::log(std::tan(std::numbers::pi / 4 + 50.4501 * std::numbers::pi / 360)) / std::numbers::pi) / 2;
+    const MapPoint viaWorld = worldToMap(kyivWorldX, kyivWorldY);
+    const MapPoint direct = lonLatToMap(30.5234, 50.4501);
+    check(near(viaWorld.x, direct.x, 1e-9) && near(viaWorld.y, direct.y, 1e-9), "world square to map plane");
+    const MapPoint back = mapToWorld(direct);
+    check(near(back.x, kyivWorldX, 1e-12) && near(back.y, kyivWorldY, 1e-12), "map plane to world square");
+
+    // At zoom z a 256-pixel tile spans 1/2^z of the world.
+    const MapPoint tileStart = worldToMap(0, 0), tileEnd = worldToMap(1.0 / 64, 0);
+    const double pixelsPerUnit = 256 / (tileEnd.x - tileStart.x);
+    check(near(tileZoomForScale(pixelsPerUnit), 6, 1e-9), "tile zoom for scale");
 }
 
 void testSimplifyRing() {
@@ -308,8 +324,8 @@ void testCities() {
     }
     check(threw, "unknown kind throws");
 
-    check(near(webZoomForView(1), 5.2, 1e-12) && near(webZoomForView(4), 7.2, 1e-12),
-          "view zoom to web zoom");
+    check(near(labelZoomForView(1), 5.2, 1e-12) && near(labelZoomForView(4), 7.2, 1e-12),
+          "view zoom to label zoom");
 }
 
 void testTimestamps() {

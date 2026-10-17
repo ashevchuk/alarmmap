@@ -9,7 +9,7 @@ using json = nlohmann::json;
 
 namespace {
 
-constexpr double kWebZoomAtCountryView = 5.2;
+constexpr double kLabelZoomAtCountryView = 5.2;
 
 CityKind kindOf(const std::string& kind) {
     if (kind == "capital") return CityKind::Capital;
@@ -38,6 +38,6 @@ std::vector<City> loadCities(const json& collection) {
     return cities;
 }
 
-double webZoomForView(double viewZoom) { return kWebZoomAtCountryView + std::log2(viewZoom); }
+double labelZoomForView(double viewZoom) { return kLabelZoomAtCountryView + std::log2(viewZoom); }
 
 }  // namespace alarmmap
