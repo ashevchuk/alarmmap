@@ -15,6 +15,7 @@
 #include "live_feed.hpp"
 #include "map_layer.hpp"
 #include "map_update.hpp"
+#include "map_view.hpp"
 #include "marker_layout.hpp"
 #include "projection.hpp"
 #include "region_geometry.hpp"
@@ -68,8 +69,13 @@ constexpr auto kScreenshotPollInterval = std::chrono::milliseconds(100);
 constexpr double kSimplifyTolerance = 0.05;
 
 // Animations here are slow (20 s glides, multi-second fades); 30 frames per
-// second look the same as 60 at half the cost.
+// second look the same as 60 at half the cost. Panning and zooming get 60
+// while the user interacts and shortly after.
 constexpr double kFramesPerSecond = 30;
+constexpr double kInteractiveFramesPerSecond = 60;
+constexpr double kInteractionHoldSeconds = 1;
+constexpr double kWheelZoomStep = 1.25;
+constexpr double kKeyZoomStep = 1.5;
 constexpr int kInitialWidth = 1600;
 constexpr int kInitialHeight = 1000;
 constexpr int kMinimumWidth = 320;
@@ -306,20 +312,23 @@ public:
     }
 
     // Offscreen work that switches render targets; runs before the frame.
-    void prepare(int width, int height) { mapLayer_.prepare(width, height); }
+    void prepare(const MapView& view, double now) { mapLayer_.prepare(view, now); }
 
-    void draw(int width, int height, const Camera2D& camera, const HeatRenderer& heat,
+    void draw(const MapView& view, const Camera2D& camera, const HeatRenderer& heat,
               const TargetIcons& icons, double now) const {
+        const auto width = static_cast<float>(view.width());
+        const auto height = static_cast<float>(view.height());
         ClearBackground(kScreenClear);
-        mapLayer_.draw(width, height);
-        mapLayer_.drawHighlights(freshAlertPulses(), width, height);
+        mapLayer_.draw(view);
+        mapLayer_.drawHighlights(freshAlertPulses(), view);
         heat.composite();
+        mapLayer_.drawVignette(width, height);
         std::vector<TargetMotion::Marker> markers = motion_.markersAt(now);
         std::erase_if(markers, [&](const TargetMotion::Marker& marker) {
             return !visibleTracks_.contains(marker.target.trackId);
         });
         drawTargets(markers, camera, icons);
-        drawSummary(markers, icons, height);
+        drawSummary(markers, icons, static_cast<int>(height));
         if (status) drawStatus(*status);
     }
 
@@ -579,12 +588,34 @@ void waitForFirstData(const LiveState& state, LiveData& data) {
               << " s, rendering what arrived\n";
 }
 
-void renderFrame(Scene& scene, HeatRenderer& heat, const TargetIcons& icons, int width,
-                 int height, double now, const RenderTexture2D* target) {
-    const Camera2D camera = fitMapCamera(width, height);
-    scene.prepare(width, height);
+// Mouse: wheel zooms at the cursor, left button drags. Keys: + and -
+// zoom at the centre, 0, Home or R show the whole country. Returns whether
+// the view changed.
+bool handleInput(MapView& view) {
+    const MapView before = view;
+    const Vector2 mouse = GetMousePosition();
+    if (const float wheel = GetMouseWheelMove(); wheel != 0) {
+        view.zoomAt({mouse.x, mouse.y}, std::pow(kWheelZoomStep, wheel));
+    }
+    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        const Vector2 delta = GetMouseDelta();
+        if (delta.x != 0 || delta.y != 0) view.panByPixels(delta.x, delta.y);
+    }
+    const MapPoint middle{view.width() / 2, view.height() / 2};
+    if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) view.zoomAt(middle, kKeyZoomStep);
+    if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) view.zoomAt(middle, 1 / kKeyZoomStep);
+    if (IsKeyPressed(KEY_ZERO) || IsKeyPressed(KEY_HOME) || IsKeyPressed(KEY_R)) view.reset();
+    return !(view == before);
+}
+
+void renderFrame(Scene& scene, HeatRenderer& heat, const TargetIcons& icons, const MapView& view,
+                 double now, const RenderTexture2D* target) {
+    const auto width = static_cast<int>(view.width());
+    const auto height = static_cast<int>(view.height());
+    const Camera2D camera = viewCamera(view);
+    scene.prepare(view, now);
     // Offscreen heat passes switch render targets, so they run before the frame.
-    if (heat.isStale(now, scene.dataVersion(), width, height)) {
+    if (heat.isStale(now, scene.dataVersion(), camera, width, height)) {
         heat.prepare(scene.heatQuadsAt(now), camera, width, height, now, scene.dataVersion());
     }
     if (target) {
@@ -592,7 +623,7 @@ void renderFrame(Scene& scene, HeatRenderer& heat, const TargetIcons& icons, int
     } else {
         BeginDrawing();
     }
-    scene.draw(width, height, camera, heat, icons, now);
+    scene.draw(view, camera, heat, icons, now);
     if (target) {
         EndTextureMode();
     } else {
@@ -603,9 +634,10 @@ void renderFrame(Scene& scene, HeatRenderer& heat, const TargetIcons& icons, int
 void saveScreenshot(Scene& scene, HeatRenderer& heat, const TargetIcons& icons,
                     const fs::path& path) {
     const RenderTexture2D target = LoadRenderTexture(kInitialWidth, kInitialHeight);
+    MapView view;
+    view.setViewport(kInitialWidth, kInitialHeight);
     // Render the moment new targets have finished fading in.
-    renderFrame(scene, heat, icons, kInitialWidth, kInitialHeight,
-                nowSeconds() + TargetMotion::kFadeInSeconds, &target);
+    renderFrame(scene, heat, icons, view, nowSeconds() + TargetMotion::kFadeInSeconds, &target);
     Image image = LoadImageFromTexture(target.texture);
     ImageFlipVertical(&image);  // render textures are stored bottom-up
     const bool saved = ExportImage(image, path.c_str());
@@ -664,9 +696,10 @@ int run(const Options& options) {
         } else if (options.benchmarkFrames) {
             SetTargetFPS(0);
             const double started = nowSeconds();
+            MapView view;
+            view.setViewport(GetScreenWidth(), GetScreenHeight());
             for (int frame = 0; frame < *options.benchmarkFrames && !WindowShouldClose(); ++frame) {
-                renderFrame(scene, heat, icons, GetScreenWidth(), GetScreenHeight(), nowSeconds(),
-                            nullptr);
+                renderFrame(scene, heat, icons, view, nowSeconds(), nullptr);
             }
             const double elapsed = nowSeconds() - started;
             std::cout << "frames=" << *options.benchmarkFrames
@@ -674,11 +707,17 @@ int run(const Options& options) {
         } else {
             // Paced here instead of with SetTargetFPS: raylib's limiter
             // busy-waits through the end of every frame.
-            const auto frameDuration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                std::chrono::duration<double>(1 / kFramesPerSecond));
+            const auto frameDuration = [](double framesPerSecond) {
+                return std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                    std::chrono::duration<double>(1 / framesPerSecond));
+            };
             auto nextFrame = std::chrono::steady_clock::now();
+            MapView view;
+            double lastInteraction = -kInteractionHoldSeconds;
             while (!WindowShouldClose()) {
                 const double now = nowSeconds();
+                view.setViewport(GetScreenWidth(), GetScreenHeight());
+                if (handleInput(view)) lastInteraction = now;
                 if (isLive(options)) {
                     if (state.copyIfNewer(liveVersion, liveData)) {
                         scene.apply(liveData.targets, liveData.alerts, now);
@@ -686,9 +725,12 @@ int run(const Options& options) {
                     // Refreshed every frame so the age of the snapshot keeps counting.
                     scene.status = describeLiveStatus(liveData, nowSeconds());
                 }
-                renderFrame(scene, heat, icons, GetScreenWidth(), GetScreenHeight(), now, nullptr);
+                renderFrame(scene, heat, icons, view, now, nullptr);
+                const bool interacting = now - lastInteraction < kInteractionHoldSeconds;
                 // A late frame resets the schedule instead of rushing to catch up.
-                nextFrame = std::max(nextFrame + frameDuration, std::chrono::steady_clock::now());
+                nextFrame = std::max(
+                    nextFrame + frameDuration(interacting ? kInteractiveFramesPerSecond : kFramesPerSecond),
+                    std::chrono::steady_clock::now());
                 std::this_thread::sleep_until(nextFrame);
             }
         }

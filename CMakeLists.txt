@@ -29,6 +29,7 @@ add_library(alarmmap_core STATIC
     src/http.cpp
     src/live_feed.cpp
     src/map_update.cpp
+    src/map_view.cpp
     src/marker_layout.cpp
     src/projection.cpp
     src/region_geometry.cpp

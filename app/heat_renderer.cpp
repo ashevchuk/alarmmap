@@ -49,8 +49,14 @@ HeatRenderer::~HeatRenderer() {
     UnloadShader(composite_);
 }
 
-bool HeatRenderer::isStale(double now, std::uint64_t dataVersion, int width, int height) const {
-    return !prepared_ || dataVersion != preparedVersion_ || width != preparedWidth_ ||
+bool HeatRenderer::isStale(double now, std::uint64_t dataVersion, const Camera2D& camera, int width,
+                           int height) const {
+    const bool cameraMoved = camera.zoom != preparedCamera_.zoom ||
+                             camera.target.x != preparedCamera_.target.x ||
+                             camera.target.y != preparedCamera_.target.y ||
+                             camera.offset.x != preparedCamera_.offset.x ||
+                             camera.offset.y != preparedCamera_.offset.y;
+    return !prepared_ || cameraMoved || dataVersion != preparedVersion_ || width != preparedWidth_ ||
            height != preparedHeight_ || now - preparedAt_ >= kRefreshIntervalSeconds;
 }
 
@@ -61,6 +67,7 @@ void HeatRenderer::prepare(const std::vector<alarmmap::HeatQuad>& quads, const C
     preparedVersion_ = dataVersion;
     preparedWidth_ = width;
     preparedHeight_ = height;
+    preparedCamera_ = camera;
     hasHeat_ = !quads.empty() && width > 0 && height > 0;
     if (!hasHeat_) return;
     if (width != width_ || height != height_) {

@@ -24,7 +24,8 @@ public:
     static constexpr double kRefreshIntervalSeconds = 0.1;
 
     // Whether prepare() would produce a different picture than the last one.
-    bool isStale(double now, std::uint64_t dataVersion, int width, int height) const;
+    bool isStale(double now, std::uint64_t dataVersion, const Camera2D& camera, int width,
+                 int height) const;
     // Renders and blurs the mask offscreen. Must be called outside
     // BeginDrawing/BeginTextureMode, because it switches render targets.
     void prepare(const std::vector<alarmmap::HeatQuad>& quads, const Camera2D& camera, int width,
@@ -44,4 +45,5 @@ private:
     std::uint64_t preparedVersion_ = 0;
     int preparedWidth_ = 0;
     int preparedHeight_ = 0;
+    Camera2D preparedCamera_{};
 };

@@ -46,7 +46,13 @@ void main() {
 // Rendering at twice the window size and shrinking with bilinear filtering
 // averages 2x2 samples per pixel: smooth edges without MSAA render targets.
 constexpr float kSupersampling = 2;
-constexpr float kMarginPx = 24;
+// The cache reaches this share of the window size past every edge, so a
+// pan shows cached map instead of empty space until the re-render.
+constexpr float kCacheMarginShare = 0.25f;
+// A moving view is re-rendered once it rests this long, and at least this
+// often while it keeps moving.
+constexpr double kSettleSeconds = 0.12;
+constexpr double kMaxStaleSeconds = 0.5;
 constexpr float kOblastBorderPx = 1.5f;
 constexpr float kRaionBorderPx = 0.8f;
 constexpr float kCountryHaloRadiusPx = 26;
@@ -117,15 +123,16 @@ Texture2D makeVignette() {
 
 }  // namespace
 
-Camera2D fitMapCamera(int width, int height, float scale) {
-    const float margin = kMarginPx * scale;
-    const float zoom = std::max(0.01f, std::min((width - 2 * margin) / static_cast<float>(kMapWidth),
-                                                (height - 2 * margin) / static_cast<float>(kMapHeight)));
+Camera2D viewCamera(const alarmmap::MapView& view, float targetWidth, float targetHeight, float scale) {
     Camera2D camera{};
-    camera.offset = {width / 2.0f, height / 2.0f};
-    camera.target = {static_cast<float>(kMapWidth / 2), static_cast<float>(kMapHeight / 2)};
-    camera.zoom = zoom;
+    camera.offset = {targetWidth / 2, targetHeight / 2};
+    camera.target = toVector(view.center());
+    camera.zoom = static_cast<float>(view.pixelsPerUnit()) * scale;
     return camera;
+}
+
+Camera2D viewCamera(const alarmmap::MapView& view) {
+    return viewCamera(view, static_cast<float>(view.width()), static_cast<float>(view.height()));
 }
 
 MapLayer::MapLayer(const std::vector<RegionShape>& shapes, const Font& font)
@@ -174,11 +181,13 @@ void MapLayer::resize(int width, int height) {
             UnloadRenderTexture(target);
         }
     }
-    cache_ = loadLinearTarget(static_cast<int>(width * kSupersampling),
-                              static_cast<int>(height * kSupersampling));
+    const int areaWidth = static_cast<int>(width * (1 + 2 * kCacheMarginShare));
+    const int areaHeight = static_cast<int>(height * (1 + 2 * kCacheMarginShare));
+    cache_ = loadLinearTarget(static_cast<int>(areaWidth * kSupersampling),
+                              static_cast<int>(areaHeight * kSupersampling));
     // Glows are soft anyway, so their masks use the window resolution.
-    country_ = {loadLinearTarget(width, height), loadLinearTarget(width, height)};
-    alerts_ = {loadLinearTarget(width, height), loadLinearTarget(width, height)};
+    country_ = {loadLinearTarget(areaWidth, areaHeight), loadLinearTarget(areaWidth, areaHeight)};
+    alerts_ = {loadLinearTarget(areaWidth, areaHeight), loadLinearTarget(areaWidth, areaHeight)};
     width_ = width;
     height_ = height;
     dirty_ = true;
@@ -196,8 +205,8 @@ void MapLayer::drawFills(bool alertsOnly, Color color) const {
     }
 }
 
-void MapLayer::renderMask(const GlowMasks& masks, bool alertsOnly, float blurRadius) {
-    const Camera2D camera = fitMapCamera(width_, height_);
+void MapLayer::renderMask(const GlowMasks& masks, const Camera2D& camera, bool alertsOnly,
+                          float blurRadius) {
     for (const RenderTexture2D* target : {&masks.sharp, &masks.blurred}) {
         BeginTextureMode(*target);
         ClearBackground(BLANK);
@@ -250,17 +259,36 @@ void MapLayer::drawLabels(const Camera2D& camera, float scale) const {
     }
 }
 
-void MapLayer::prepare(int width, int height) {
+void MapLayer::prepare(const alarmmap::MapView& view, double now) {
+    const auto width = static_cast<int>(view.width());
+    const auto height = static_cast<int>(view.height());
     if (width <= 0 || height <= 0) return;
     if (width != width_ || height != height_) resize(width, height);
+    if (!(view == pendingView_)) {
+        pendingView_ = view;
+        pendingSince_ = now;
+    }
+    if (!(view == renderedView_) &&
+        (now - pendingSince_ >= kSettleSeconds || now - renderedAt_ >= kMaxStaleSeconds)) {
+        dirty_ = true;
+    }
     if (!dirty_) return;
+    render(view);
+    renderedView_ = view;
+    renderedAt_ = now;
+    dirty_ = false;
+}
 
-    renderMask(country_, false, kCountryHaloRadiusPx);
+void MapLayer::render(const alarmmap::MapView& view) {
+    const auto maskWidth = static_cast<float>(country_.sharp.texture.width);
+    const auto maskHeight = static_cast<float>(country_.sharp.texture.height);
+    const Camera2D maskCamera = viewCamera(view, maskWidth, maskHeight);
+    renderMask(country_, maskCamera, false, kCountryHaloRadiusPx);
     const bool hasAlerts = !alertRegionIds_.empty();
-    if (hasAlerts) renderMask(alerts_, true, kAlertGlowRadiusPx);
+    if (hasAlerts) renderMask(alerts_, maskCamera, true, kAlertGlowRadiusPx);
 
-    const Camera2D camera =
-        fitMapCamera(cache_.texture.width, cache_.texture.height, kSupersampling);
+    const Camera2D camera = viewCamera(view, static_cast<float>(cache_.texture.width),
+                                       static_cast<float>(cache_.texture.height), kSupersampling);
     BeginTextureMode(cache_);
     ClearBackground(kBackground);
     drawGlow(country_, kNoGlow, kCountryHalo);
@@ -273,18 +301,18 @@ void MapLayer::prepare(int width, int height) {
     drawBorders(camera, kSupersampling);
     EndMode2D();
     drawLabels(camera, kSupersampling);
-    DrawTexturePro(vignette_, {0, 0, kVignetteSize, kVignetteSize},
-                   {0, 0, static_cast<float>(cache_.texture.width),
-                    static_cast<float>(cache_.texture.height)},
-                   {0, 0}, 0, WHITE);
     EndTextureMode();
-    dirty_ = false;
 }
 
-void MapLayer::drawHighlights(const std::map<std::string, float>& opacityByRegion, int width,
-                              int height) const {
+void MapLayer::drawVignette(float width, float height) const {
+    DrawTexturePro(vignette_, {0, 0, kVignetteSize, kVignetteSize}, {0, 0, width, height}, {0, 0}, 0,
+                   WHITE);
+}
+
+void MapLayer::drawHighlights(const std::map<std::string, float>& opacityByRegion,
+                              const alarmmap::MapView& view) const {
     if (opacityByRegion.empty()) return;
-    BeginMode2D(fitMapCamera(width, height));
+    BeginMode2D(viewCamera(view));
     for (int rank = kOblastRank; rank <= kHromadaRank; ++rank) {
         for (const DrawableRegion& region : regions_) {
             if (region.shape->rank != rank) continue;
@@ -295,7 +323,18 @@ void MapLayer::drawHighlights(const std::map<std::string, float>& opacityByRegio
     EndMode2D();
 }
 
-void MapLayer::draw(int width, int height) const {
+void MapLayer::draw(const alarmmap::MapView& view) const {
     if (width_ == 0) return;
-    drawTargetStretched(cache_, static_cast<float>(width), static_cast<float>(height));
+    // The cache covers a map area around the view it was rendered for;
+    // place that area where it falls in the current view.
+    const double halfWidth = cache_.texture.width / kSupersampling / 2 / renderedView_.pixelsPerUnit();
+    const double halfHeight = cache_.texture.height / kSupersampling / 2 / renderedView_.pixelsPerUnit();
+    const MapPoint center = renderedView_.center();
+    const MapPoint topLeft = view.mapToScreen({center.x - halfWidth, center.y - halfHeight});
+    const MapPoint bottomRight = view.mapToScreen({center.x + halfWidth, center.y + halfHeight});
+    DrawTexturePro(cache_.texture, flippedSource(cache_.texture),
+                   {static_cast<float>(topLeft.x), static_cast<float>(topLeft.y),
+                    static_cast<float>(bottomRight.x - topLeft.x),
+                    static_cast<float>(bottomRight.y - topLeft.y)},
+                   {0, 0}, 0, WHITE);
 }

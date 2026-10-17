@@ -1,6 +1,7 @@
 // Usage: geometry_test <tests/data directory>
 
 #include "map_update.hpp"
+#include "map_view.hpp"
 #include "projection.hpp"
 #include "region_geometry.hpp"
 
@@ -233,6 +234,43 @@ void testLabelPoint() {
     check(threw, "region without outline throws");
 }
 
+void testMapView() {
+    MapView view;
+    view.setViewport(1600, 1000);
+    const double fit = std::min((1600 - 48) / kMapWidth, (1000 - 48) / kMapHeight);
+    check(near(view.pixelsPerUnit(), fit, 1e-12), "zoom 1 fits the map");
+    const MapPoint middle = view.mapToScreen({kMapWidth / 2, kMapHeight / 2});
+    check(near(middle.x, 800, 1e-9) && near(middle.y, 500, 1e-9), "map centre in the middle");
+
+    const MapPoint screen{700, 430};
+    const MapPoint anchor = view.screenToMap(screen);
+    const MapPoint back = view.mapToScreen(anchor);
+    check(near(back.x, screen.x, 1e-9) && near(back.y, screen.y, 1e-9), "screen/map round trip");
+
+    view.zoomAt(screen, 4);
+    check(near(view.zoom(), 4, 1e-12), "zoomed in");
+    const MapPoint still = view.screenToMap(screen);
+    check(near(still.x, anchor.x, 1e-9) && near(still.y, anchor.y, 1e-9), "point under the cursor stays");
+
+    const MapPoint before = view.center();
+    view.panByPixels(100, -50);
+    check(near(view.center().x, before.x - 100 / view.pixelsPerUnit(), 1e-9) &&
+              near(view.center().y, before.y + 50 / view.pixelsPerUnit(), 1e-9),
+          "panning moves the centre against the drag");
+
+    view.panByPixels(1e6, 1e6);
+    check(near(view.center().x, 0, 1e-12) && near(view.center().y, 0, 1e-12),
+          "centre cannot leave the map plane");
+
+    view.zoomAt(screen, 1e6);
+    check(near(view.zoom(), MapView::kMaxZoom, 1e-12), "zoom capped");
+    view.zoomAt(screen, 1e-6);
+    check(near(view.zoom(), MapView::kMinZoom, 1e-12), "zoom floored");
+
+    view.reset();
+    check(view.zoom() == 1 && view.center() == MapPoint{kMapWidth / 2, kMapHeight / 2}, "reset");
+}
+
 void testTimestamps() {
     check(parseUtcTimestampMs("1970-01-01T00:00:00Z") == 0, "epoch");
     check(parseUtcTimestampMs("2022-04-04T16:45:00Z") == 1649090700000LL, "whole seconds");
@@ -282,6 +320,7 @@ int main() {
         testBuildShapes();
         testOverrideRegionGeometry();
         testLabelPoint();
+        testMapView();
         testTimestamps();
         testAlertRegions();
     } catch (const std::exception& error) {

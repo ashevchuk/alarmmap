@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gaussian_blur.hpp"
+#include "map_view.hpp"
 #include "region_geometry.hpp"
 
 #include <raylib.h>
@@ -10,13 +11,17 @@
 #include <string>
 #include <vector>
 
-// Fits the whole map plane into a width x height target, keeping its aspect
-// ratio; `scale` multiplies the margin for supersampled targets.
-Camera2D fitMapCamera(int width, int height, float scale = 1);
+// Camera that shows `view` in the middle of a target of the given size,
+// magnified `scale` times for supersampled targets.
+Camera2D viewCamera(const alarmmap::MapView& view, float targetWidth, float targetHeight,
+                    float scale = 1);
+// Camera for the window the view describes.
+Camera2D viewCamera(const alarmmap::MapView& view);
 
-// Region fills, borders, glows and oblast names. They change only with
-// alerts or the window size, so they are rendered into a cached,
-// supersampled texture.
+// Region fills, borders, glows and oblast names, rendered into a cached,
+// supersampled texture that extends past the window edges. While the view
+// moves, the old cache is drawn shifted and scaled, and it is re-rendered
+// once the view settles.
 class MapLayer {
 public:
     // Requires an initialised window (an OpenGL context). Keeps references
@@ -30,13 +35,15 @@ public:
     void setAlertRegions(const std::set<std::string>* regionIds);
     // Re-renders the cache when needed. Must be called outside
     // BeginDrawing/BeginTextureMode, because it switches render targets.
-    void prepare(int width, int height);
-    // Draws the cached map over the whole current target.
-    void draw(int width, int height) const;
+    void prepare(const alarmmap::MapView& view, double now);
+    // Draws the cached map as seen in `view`.
+    void draw(const alarmmap::MapView& view) const;
     // Fills regions over the drawn map with the highlight colour at the given
     // opacity; meant for a few regions that change every frame.
-    void drawHighlights(const std::map<std::string, float>& opacityByRegion, int width,
-                        int height) const;
+    void drawHighlights(const std::map<std::string, float>& opacityByRegion,
+                        const alarmmap::MapView& view) const;
+    // Darkens the window edges.
+    void drawVignette(float width, float height) const;
 
 private:
     struct DrawableRegion {
@@ -57,7 +64,8 @@ private:
     };
 
     void resize(int width, int height);
-    void renderMask(const GlowMasks& masks, bool alertsOnly, float blurRadius);
+    void render(const alarmmap::MapView& view);
+    void renderMask(const GlowMasks& masks, const Camera2D& camera, bool alertsOnly, float blurRadius);
     void drawFills(bool alertsOnly, Color color) const;
     void drawBorders(const Camera2D& camera, float scale) const;
     void drawGlow(const GlowMasks& masks, Vector4 inner, Vector4 outer) const;
@@ -76,7 +84,12 @@ private:
     RenderTexture2D cache_{};
     GlowMasks country_;
     GlowMasks alerts_;
+    // Window size the targets were made for.
     int width_ = 0;
     int height_ = 0;
     bool dirty_ = true;
+    alarmmap::MapView renderedView_;
+    alarmmap::MapView pendingView_;
+    double pendingSince_ = 0;
+    double renderedAt_ = 0;
 };
