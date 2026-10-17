@@ -18,6 +18,9 @@ namespace {
 // Foreign GeoJSON member keeping the site's geometry of an overridden region.
 constexpr const char* kSiteGeometryKey = "siteGeometry";
 constexpr double kLabelGridSteps = 24;
+// A label needs no better than about a kilometre, so the search runs on
+// outlines simplified this much, which makes it many times faster.
+constexpr double kLabelSearchTolerance = 0.2;
 constexpr int kLabelRefinementLevels = 4;
 
 double distanceToSegment(const MapPoint& point, const MapPoint& start, const MapPoint& end) {
@@ -110,9 +113,15 @@ std::vector<MapPoint> simplifyRing(const std::vector<MapPoint>& ring, double tol
 
 MapPoint labelPoint(const RegionShape& shape) {
     if (shape.outlines.empty()) throw std::runtime_error("region " + shape.id + " has no outline");
+    std::vector<std::vector<MapPoint>> outlines;
+    for (const auto& ring : shape.outlines) {
+        std::vector<MapPoint> coarse = simplifyRing(ring, kLabelSearchTolerance);
+        // Rings too small to survive keep their full shape.
+        outlines.push_back(coarse.empty() ? ring : std::move(coarse));
+    }
     double left = std::numeric_limits<double>::infinity(), top = left;
     double right = -left, bottom = -left;
-    for (const auto& ring : shape.outlines) {
+    for (const auto& ring : outlines) {
         for (const MapPoint& point : ring) {
             left = std::min(left, point.x);
             right = std::max(right, point.x);
@@ -125,7 +134,7 @@ MapPoint labelPoint(const RegionShape& shape) {
     const auto signedDistance = [&](const MapPoint& point) {
         bool inside = false;
         double nearest = std::numeric_limits<double>::infinity();
-        for (const auto& ring : shape.outlines) {
+        for (const auto& ring : outlines) {
             for (size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {
                 const MapPoint& a = ring[j];
                 const MapPoint& b = ring[i];
