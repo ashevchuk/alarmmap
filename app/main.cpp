@@ -672,6 +672,9 @@ void saveScreenshot(Scene& scene, HeatRenderer& heat, const TargetIcons& icons,
     renderFrame(scene, heat, icons, view, nowSeconds() + TargetMotion::kFadeInSeconds, &target);
     Image image = LoadImageFromTexture(target.texture);
     ImageFlipVertical(&image);  // render textures are stored bottom-up
+    // Blending leaves the render target's alpha below 1 in places; the window
+    // ignores it, so the screenshot drops it too.
+    ImageFormat(&image, PIXELFORMAT_UNCOMPRESSED_R8G8B8);
     const bool saved = ExportImage(image, path.c_str());
     UnloadImage(image);
     UnloadRenderTexture(target);
