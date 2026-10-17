@@ -47,6 +47,7 @@ target_compile_options(alarmmap_core PRIVATE ${WARNING_FLAGS})
 
 add_executable(alarmmap
     app/main.cpp
+    app/app_icon.cpp
     app/gaussian_blur.cpp
     app/heat_renderer.cpp
     app/map_layer.cpp

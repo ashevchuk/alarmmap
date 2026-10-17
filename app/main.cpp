@@ -11,6 +11,7 @@
 
 #include "heat_cells.hpp"
 #include "heat_renderer.hpp"
+#include "app_icon.hpp"
 #include "cities.hpp"
 #include "http.hpp"
 #include "live_feed.hpp"
@@ -722,6 +723,7 @@ int run(const Options& options) {
         if (!isLive(options)) scene.apply(fileTargets, fileAlerts, nowSeconds());
         HeatRenderer heat;
         const TargetIcons icons;
+        setWindowIcon(icons.forKind(TargetKind::Drone));
         LiveData liveData;
         std::uint64_t liveVersion = 0;
 
