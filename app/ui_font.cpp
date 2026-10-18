@@ -6,7 +6,8 @@
 
 namespace {
 
-constexpr const char* kCandidateFiles[] = {
+constexpr const char* kBundledFiles[] = {"NotoSans-Medium.ttf"};
+constexpr const char* kSystemFiles[] = {
     "/usr/share/fonts/noto/NotoSans-Medium.ttf",
     "/usr/share/fonts/noto/NotoSans-Regular.ttf",
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
@@ -28,11 +29,14 @@ std::vector<int> uiCodepoints() {
 
 }  // namespace
 
-UiFont::UiFont() {
-    for (const char* file : kCandidateFiles) {
+UiFont::UiFont(const std::filesystem::path& bundledFonts) {
+    std::vector<std::filesystem::path> candidates;
+    for (const char* file : kBundledFiles) candidates.push_back(bundledFonts / file);
+    for (const char* file : kSystemFiles) candidates.push_back(file);
+    for (const std::filesystem::path& file : candidates) {
         if (!std::filesystem::exists(file)) continue;
         std::vector<int> codepoints = uiCodepoints();
-        font_ = LoadFontEx(file, kRasterSizePx, codepoints.data(), static_cast<int>(codepoints.size()));
+        font_ = LoadFontEx(file.c_str(), kRasterSizePx, codepoints.data(), static_cast<int>(codepoints.size()));
         if (!IsFontValid(font_)) continue;
         GenTextureMipmaps(&font_.texture);
         SetTextureFilter(font_.texture, TEXTURE_FILTER_TRILINEAR);

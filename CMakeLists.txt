@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(alarmmap LANGUAGES CXX)
+project(alarmmap VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -56,7 +56,9 @@ add_executable(alarmmap
     app/target_effects.cpp
     app/ui_font.cpp)
 target_link_libraries(alarmmap PRIVATE alarmmap_core raylib Threads::Threads)
-target_compile_definitions(alarmmap PRIVATE ALARMMAP_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+target_compile_definitions(alarmmap PRIVATE
+    ALARMMAP_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    ALARMMAP_VERSION="${PROJECT_VERSION}")
 target_compile_options(alarmmap PRIVATE ${WARNING_FLAGS})
 
 add_executable(ws_probe tools/ws_probe.cpp)
@@ -71,3 +73,9 @@ foreach(test_name target_snapshot geometry heat basemap)
     add_test(NAME ${test_name}
         COMMAND ${test_name}_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/data)
 endforeach()
+
+include(GNUInstallDirs)
+install(TARGETS alarmmap RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES data/cities.geojson data/crimea.geojson DESTINATION ${CMAKE_INSTALL_DATADIR}/alarmmap)
+install(FILES packaging/alarmmap.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES packaging/alarmmap.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps)

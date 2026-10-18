@@ -1,0 +1,14 @@
+#!/bin/sh
+# The bundled OpenSSL looks for CA certificates where the build distribution
+# keeps them; point it at the host's bundle instead.
+HERE="$(dirname "$(readlink -f "$0")")"
+if [ -z "$SSL_CERT_FILE" ]; then
+    for bundle in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt \
+                  /etc/ssl/ca-bundle.pem /etc/ssl/cert.pem; do
+        if [ -f "$bundle" ]; then
+            export SSL_CERT_FILE="$bundle"
+            break
+        fi
+    done
+fi
+exec "$HERE/usr/bin/alarmmap" "$@"

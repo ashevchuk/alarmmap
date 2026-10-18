@@ -2,6 +2,7 @@
 // and the targets themselves.
 //
 // Usage: alarmmap [--targets FILE] [--alerts FILE] [--screenshot PNG] [--benchmark FRAMES]
+//        alarmmap --version
 //   --targets     target snapshot (compact v2 packet or REST JSON)
 //   --alerts      updateMap payload
 //   --screenshot  render one frame into PNG and exit
@@ -61,8 +62,8 @@ constexpr const char* kGeometryUrl =
     "https://map.ukrainealarm.com/data/real-map/regions-standard-v1.geojson";
 constexpr const char* kGeometryFileName = "regions-standard-v1.geojson";
 // Land outline of Crimea; the site's own outline follows the territorial sea.
-constexpr const char* kCrimeaOverrideFile = ALARMMAP_DATA_DIR "/crimea.geojson";
-constexpr const char* kCitiesFile = ALARMMAP_DATA_DIR "/cities.geojson";
+constexpr const char* kCrimeaOverrideFile = "crimea.geojson";
+constexpr const char* kCitiesFile = "cities.geojson";
 constexpr const char* kTileJsonUrl = "https://tiles.openfreemap.org/planet";
 constexpr const char* kTargetsChannel = "mapTargets_heat_legacy_v2";
 constexpr const char* kTargetsSnapshotUrl =
@@ -176,12 +177,17 @@ struct Options {
     std::optional<fs::path> alerts;
     std::optional<fs::path> screenshot;
     std::optional<int> benchmarkFrames;
+    bool version = false;
 };
 
 Options parseOptions(int argc, char** argv) {
     Options options;
     for (int i = 1; i < argc; ++i) {
         const std::string name = argv[i];
+        if (name == "--version") {
+            options.version = true;
+            continue;
+        }
         if (i + 1 >= argc) throw std::runtime_error("missing value for " + name);
         const fs::path value = argv[++i];
         if (name == "--targets") options.targets = value;
@@ -206,6 +212,19 @@ fs::path cacheDirectory() {
     const char* home = std::getenv("HOME");
     if (!home || !*home) throw std::runtime_error("neither XDG_CACHE_HOME nor HOME is set");
     return fs::path(home) / ".cache" / "alarmmap";
+}
+
+// Installed data lives in share/alarmmap beside the bin directory, which
+// keeps an AppImage or any other relocated install working; a build tree
+// uses the source data directory.
+fs::path dataDirectory() {
+    std::error_code error;
+    const fs::path executable = fs::read_symlink("/proc/self/exe", error);
+    if (!error) {
+        const fs::path installed = executable.parent_path().parent_path() / "share" / "alarmmap";
+        if (fs::exists(installed / kCitiesFile)) return installed;
+    }
+    return ALARMMAP_DATA_DIR;
 }
 
 fs::path ensureGeometryFile() {
@@ -288,10 +307,10 @@ struct RegionShapes {
 RegionShapes loadShapes() {
     const fs::path geometryPath = ensureGeometryFile();
     json regions = readJsonFile(geometryPath);
-    overrideRegionGeometry(regions, readJsonFile(kCrimeaOverrideFile));
+    overrideRegionGeometry(regions, readJsonFile(dataDirectory() / kCrimeaOverrideFile));
     RegionShapes shapes{buildRegionShapes(regions, kSimplifyTolerance),
                         buildRegionShapes(regions, kDetailedTolerance),
-                        loadCities(readJsonFile(kCitiesFile))};
+                        loadCities(readJsonFile(dataDirectory() / kCitiesFile))};
     const auto triangles = [](const std::vector<RegionShape>& level) {
         size_t count = 0;
         for (const auto& shape : level) count += shape.indices.size() / 3;
@@ -795,8 +814,9 @@ void saveScreenshot(Scene& scene, HeatRenderer& heat, const TargetIcons& icons,
     const RenderTexture2D target = LoadRenderTexture(kInitialWidth, kInitialHeight);
     MapView view;
     view.setViewport(kInitialWidth, kInitialHeight);
-    // Render the moment new targets have finished fading in.
-    renderFrame(scene, heat, icons, view, nowSeconds() + TargetMotion::kFadeInSeconds, &target);
+    // Render the moment new targets have finished appearing.
+    const double settled = std::max(TargetMotion::kFadeInSeconds, kTeleportSeconds);
+    renderFrame(scene, heat, icons, view, nowSeconds() + settled, &target);
     Image image = LoadImageFromTexture(target.texture);
     ImageFlipVertical(&image);  // render textures are stored bottom-up
     // Blending leaves the render target's alpha below 1 in places; the window
@@ -839,7 +859,7 @@ int run(const Options& options) {
     {
         // GPU resources must be created after the window opens and released
         // before it closes.
-        const UiFont font;
+        const UiFont font(dataDirectory() / "fonts");
         Scene scene(std::move(shapes), font.get(), cacheDirectory() / "tiles");
         if (!isLive(options)) scene.apply(fileTargets, fileAlerts, nowSeconds());
         HeatRenderer heat;
@@ -912,7 +932,13 @@ int main(int argc, char** argv) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
     int exitCode = 1;
     try {
-        exitCode = run(parseOptions(argc, argv));
+        const Options options = parseOptions(argc, argv);
+        if (options.version) {
+            std::cout << "alarmmap " ALARMMAP_VERSION "\n";
+            exitCode = 0;
+        } else {
+            exitCode = run(options);
+        }
     } catch (const std::exception& error) {
         std::cerr << "alarmmap: " << error.what() << '\n';
     }

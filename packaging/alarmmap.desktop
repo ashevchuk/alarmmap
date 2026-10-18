@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=alarmmap
+Comment=Live map of air raid alerts and aerial targets over Ukraine
+Comment[uk]=Мапа повітряних тривог і цілей над Україною наживо
+Exec=alarmmap
+Icon=alarmmap
+Categories=Utility;
+Terminal=false

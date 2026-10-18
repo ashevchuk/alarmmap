@@ -2,13 +2,16 @@
 
 #include <raylib.h>
 
-// System sans font with Cyrillic glyphs, rasterised large and mipmapped so it
+#include <filesystem>
+
+// Sans font with Cyrillic glyphs, bundled or from the system, rasterised large and mipmapped so it
 // stays smooth at any drawn size. Falls back to raylib's built-in font, which
 // has no Cyrillic, when no candidate font file exists.
 class UiFont {
 public:
-    // Requires an initialised window (an OpenGL context).
-    UiFont();
+    // Requires an initialised window (an OpenGL context). Fonts in
+    // `bundledFonts` take precedence over system ones.
+    explicit UiFont(const std::filesystem::path& bundledFonts);
     ~UiFont();
     UiFont(const UiFont&) = delete;
     UiFont& operator=(const UiFont&) = delete;

@@ -25,7 +25,7 @@ constexpr Color kRim = {255, 80, 70, 230};
 
 }  // namespace
 
-void setWindowIcon(const SnoutIcon& drone) {
+Image renderAppIcon(const SnoutIcon& drone) {
     const RenderTexture2D canvas = loadLinearTarget(kCanvas, kCanvas);
     BeginTextureMode(canvas);
     ClearBackground(BLANK);
@@ -46,7 +46,11 @@ void setWindowIcon(const SnoutIcon& drone) {
     UnloadRenderTexture(canvas);
     ImageFlipVertical(&full);  // render textures are stored bottom-up
     ImageFormat(&full, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    return full;
+}
 
+void setWindowIcon(const SnoutIcon& drone) {
+    const Image full = renderAppIcon(drone);
     std::vector<Image> images;
     for (const int size : kIconSizes) {
         Image image = ImageCopy(full);
