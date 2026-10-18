@@ -123,6 +123,102 @@ void drawExplosion(Vector2 center, double age, std::uint32_t seed) {
     EndBlendMode();
 }
 
+// A circle squashed vertically by `flatness`, as smoke rolls out flat.
+void drawFlatPuff(Vector2 center, float radius, float flatness, Color inner, Color outer) {
+    rlPushMatrix();
+    rlTranslatef(center.x, center.y, 0);
+    rlScalef(1, flatness, 1);
+    DrawCircleGradient({0, 0}, radius, inner, outer);
+    rlPopMatrix();
+}
+
+void drawMushroom(Vector2 ground, double age, std::uint32_t seed) {
+    const auto t = static_cast<float>(age);
+    if (t < 0 || t >= kMushroomSeconds) return;
+    constexpr float kHeight = 105;
+    constexpr float kCapRadius = 44;
+    const float rise = easeOut(clamp01(t / 1.8));
+    const float grow = easeOut(clamp01((t - 0.1) / 2.0));
+    const float fade = 1 - clamp01((t - 3.0) / (kMushroomSeconds - 3.0));
+    const float heat = 1 - clamp01(t / 2.6);
+    const float smokeIn = clamp01((t - 0.15) / 0.45);
+    const Vector2 cap = {ground.x, ground.y - kHeight * rise};
+    const float capRadius = kCapRadius * (0.35f + 0.65f * grow);
+    const Color smoke = {118, 98, 84, 255};
+    const Color shade = {72, 58, 50, 255};
+    const Color dust = {84, 70, 60, 255};
+    const float alpha = smokeIn * fade;
+
+    // Smoke and dust darken the map, so they go on with normal blending.
+    for (std::uint32_t i = 0; i < 8; ++i) {
+        const float x = (random01(seed, i) * 2 - 1) * 60 * grow;
+        const float radius = (14 + 10 * random01(seed, i + 10)) * (0.5f + 0.5f * grow);
+        drawFlatPuff({ground.x + x, ground.y}, radius, 0.45f, withAlpha(dust, 0.7f * alpha), withAlpha(dust, 0));
+    }
+    constexpr int kStemPuffs = 22;
+    for (int i = 0; i < kStemPuffs; ++i) {
+        const float along = static_cast<float>(i) / (kStemPuffs - 1);
+        const Vector2 at = {ground.x + 1.5f * std::sin(along * 6 + t * 2), ground.y + (cap.y - ground.y) * along};
+        const float radius = 7 + 6 * along + 2 * grow;
+        DrawCircleGradient(at, radius, withAlpha(along < 0.5f ? shade : smoke, 0.9f * alpha), withAlpha(shade, 0));
+    }
+    // The cap: a flat body, a ring of rolling puffs around it and a dome.
+    drawFlatPuff({cap.x, cap.y + capRadius * 0.1f}, capRadius * 1.05f, 0.5f, withAlpha(shade, 0.95f * alpha),
+                 withAlpha(shade, 0));
+    constexpr std::uint32_t kCapPuffs = 16;
+    const float roll = t * 0.8f;
+    for (std::uint32_t i = 0; i < kCapPuffs; ++i) {
+        const float angle = 2 * PI * i / kCapPuffs + roll;
+        const Vector2 at = {cap.x + std::cos(angle) * capRadius * 0.72f,
+                            cap.y + std::sin(angle) * capRadius * 0.26f - capRadius * 0.1f};
+        const float radius = capRadius * (0.4f + 0.15f * random01(seed, i + 30));
+        const Color tone = std::sin(angle) > 0 ? shade : smoke;  // the underside lies in shadow
+        DrawCircleGradient(at, radius, withAlpha(tone, 0.95f * alpha), withAlpha(tone, 0));
+    }
+    for (std::uint32_t i = 0; i < 4; ++i) {
+        const float x = (static_cast<float>(i) - 1.5f) * capRadius * 0.28f;
+        DrawCircleGradient({cap.x + x, cap.y - capRadius * 0.38f}, capRadius * 0.42f, withAlpha(smoke, 0.95f * alpha),
+                           withAlpha(smoke, 0));
+    }
+
+    BeginBlendMode(BLEND_ADDITIVE);
+    if (t < 1.4f) {
+        // The fireball climbs the stem and becomes the cap's glowing core.
+        const float q = t / 1.4f;
+        const Vector2 at = {ground.x, ground.y + (cap.y - ground.y) * easeOut(clamp01(t / 1.2))};
+        DrawCircleGradient(at, 22 + 16 * easeOut(q), withAlpha({255, 240, 200, 255}, 1 - q),
+                           withAlpha({255, 120, 20, 255}, 0));
+    }
+    const Color fire = {255, static_cast<unsigned char>(90 + 140 * heat), static_cast<unsigned char>(20 + 70 * heat), 255};
+    drawFlatPuff({cap.x, cap.y}, capRadius * 0.95f, 0.5f, withAlpha(fire, 0.85f * heat * fade),
+                 withAlpha({200, 40, 0, 255}, 0));
+    for (std::uint32_t i = 0; i < kCapPuffs; i += 2) {
+        const float angle = 2 * PI * i / kCapPuffs + roll;
+        const Vector2 at = {cap.x + std::cos(angle) * capRadius * 0.55f,
+                            cap.y + std::sin(angle) * capRadius * 0.2f - capRadius * 0.12f};
+        DrawCircleGradient(at, capRadius * 0.3f, withAlpha(fire, 0.6f * heat * fade), withAlpha({200, 40, 0, 255}, 0));
+    }
+    for (int i = 0; i < kStemPuffs; i += 3) {
+        const float along = static_cast<float>(i) / (kStemPuffs - 1);
+        const Vector2 at = {ground.x, ground.y + (cap.y - ground.y) * along};
+        DrawCircleGradient(at, 7, withAlpha({255, 140, 40, 255}, 0.55f * heat * (1 - along)),
+                           withAlpha({255, 80, 0, 255}, 0));
+    }
+    if (t < 0.45f) {
+        const float q = t / 0.45f;
+        DrawCircleGradient(ground, 25 + 100 * easeOut(q), withAlpha(WHITE, 1 - q), withAlpha({255, 230, 180, 255}, 0));
+    }
+    if (const float q = t / 1.6f; q < 1) {
+        rlPushMatrix();
+        rlTranslatef(ground.x, ground.y, 0);
+        rlScalef(1, 0.3f, 1);
+        drawRingAt({0, 0}, 20 + 150 * easeOut(q), 1 + 3 * (1 - q),
+                   withAlpha({255, 220, 170, 255}, 0.8f * (1 - q) * (1 - q)));
+        rlPopMatrix();
+    }
+    EndBlendMode();
+}
+
 void drawScorch(Vector2 center, double age, double endsAt, std::uint32_t seed) {
     const double fadeFrom = TargetMotion::kExplosionSeconds;
     const float alpha = clamp01((age - 0.3) / 0.5) * (1 - clamp01((age - fadeFrom) / (endsAt - fadeFrom)));

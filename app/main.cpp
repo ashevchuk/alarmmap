@@ -56,6 +56,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -174,6 +175,16 @@ constexpr float kHoverRadiusShare = 0.6f;
 constexpr float kTapReachPx = 24;
 // A touch that travels further than this is a drag, not a tap.
 constexpr float kTapSlopPx = 12;
+// Eight quick taps on Kyiv send every target on the map back to Russia.
+constexpr int kTapsToRetaliate = 8;
+constexpr double kTapStreakGapSeconds = 1.0;
+constexpr float kCapitalReachPx = 24;
+constexpr double kTurnSeconds = 0.7;
+constexpr double kReturnFlightSeconds = 2.6;
+constexpr double kMaxLaunchStaggerSeconds = 0.9;
+// Launched from around Kyiv when the sky happens to be empty.
+constexpr int kStandInDrones = 6;
+constexpr double kStandInSpreadUnits = 3;
 constexpr float kTooltipGapPx = 10;
 constexpr float kTooltipPaddingPx = 8;
 
@@ -442,6 +453,7 @@ public:
         const double growth = std::clamp(std::log2(view.zoom()) / std::log2(kFullMarkerZoom), 0.0, 1.0);
         const double share = kMarkerShareAtMinZoom + (1 - kMarkerShareAtMinZoom) * growth;
         markerScale_ = markerScale() * static_cast<float>(share);
+        if (retaliation_ && !retaliating(now)) retaliation_.reset();
         mapLayer_.prepare(view, now, gestureActive);
     }
 
@@ -455,6 +467,16 @@ public:
         heat.composite();
         mapLayer_.drawVignette(width, height);
         const std::vector<TargetMotion::Marker> markers = visibleMarkers(now);
+        const float ui = uiScale();
+        if (retaliating(now)) {
+            drawRetaliation(camera, icons, now);
+            drawScaledAround({0, 0}, ui, [&] {
+                drawSummary(markers, icons, static_cast<int>(height / ui));
+                if (status) drawStatus(*status);
+                drawCredits(width / ui, height / ui);
+            });
+            return;
+        }
         const std::vector<MarkerPlacement> placements = layout(markers, camera);
         std::vector<TargetMotion::Explosion> explosions = motion_.explosionsAt(now);
         std::erase_if(explosions, [&](const TargetMotion::Explosion& explosion) {
@@ -484,7 +506,6 @@ public:
         }
         // Overlays are laid out in unscaled pixels over a window shrunk by the
         // UI scale, then drawn scaled up.
-        const float ui = uiScale();
         drawScaledAround({0, 0}, ui, [&] {
             if (hovered) drawTooltip(*hovered, markers, camera, width / ui, height / ui);
             drawSummary(markers, icons, static_cast<int>(height / ui));
@@ -502,9 +523,111 @@ public:
         return markers[placement->index].target.trackId;
     }
 
+    // Turns every target on the map round and sends it to a random point in
+    // Russia, where it goes off as a mushroom cloud. Only the drawing changes;
+    // the live data goes on and the real markers return afterwards.
+    void retaliate(double now) {
+        std::mt19937 random(static_cast<std::uint32_t>(now * 1000));
+        std::uniform_real_distribution<double> unit(0, 1);
+        Retaliation strike;
+        strike.startedAt = now;
+        for (const TargetMotion::Marker& marker : visibleMarkers(now)) {
+            strike.flights.push_back({marker.position, {},
+                                      static_cast<float>(marker.target.headingDegrees.value_or(0)),
+                                      targetKind(marker.target.iconName, marker.target.detectedType),
+                                      0, effectSeed(marker.target.trackId)});
+        }
+        if (strike.flights.empty()) {
+            const MapPoint kyiv = capitalPosition();
+            for (int i = 0; i < kStandInDrones; ++i) {
+                const MapPoint from = {kyiv.x + (unit(random) * 2 - 1) * kStandInSpreadUnits,
+                                       kyiv.y + (unit(random) * 2 - 1) * kStandInSpreadUnits};
+                strike.flights.push_back({from, {}, static_cast<float>(unit(random) * 360), TargetKind::Drone, 0,
+                                          static_cast<std::uint32_t>(random())});
+            }
+        }
+        strike.endsAt = now;
+        for (Retaliation::Flight& flight : strike.flights) {
+            flight.to = randomPointInRussia(random);
+            flight.delay = unit(random) * kMaxLaunchStaggerSeconds;
+            strike.endsAt =
+                std::max(strike.endsAt, now + flight.delay + kTurnSeconds + kReturnFlightSeconds + kMushroomSeconds);
+        }
+        retaliation_ = std::move(strike);
+    }
+
+    bool retaliating(double now) const { return retaliation_ && now < retaliation_->endsAt; }
+
+    // Whether `point` on screen falls on Kyiv's label dot.
+    bool isCapitalAt(const Camera2D& camera, Vector2 point) const {
+        const Vector2 kyiv = GetWorldToScreen2D(toVector(capitalPosition()), camera);
+        return std::hypot(kyiv.x - point.x, kyiv.y - point.y) <= kCapitalReachPx * uiScale();
+    }
+
     std::optional<StatusLine> status;
 
 private:
+    MapPoint capitalPosition() const {
+        const auto capital = std::find_if(shapes_.cities.begin(), shapes_.cities.end(),
+                                          [](const City& city) { return city.kind == CityKind::Capital; });
+        return capital != shapes_.cities.end() ? capital->position : lonLatToMap(30.5234, 50.4501);
+    }
+
+    // A point inside Russia beyond Ukraine's eastern or north-eastern border,
+    // where the whole-country view shows a mushroom cloud whole even in a
+    // 16:10 window.
+    static MapPoint randomPointInRussia(std::mt19937& random) {
+        struct Area {
+            double west, east, south, north;
+        };
+        constexpr Area kEast = {40.5, 41.3, 47.4, 50.0};
+        constexpr Area kNorthEast = {36.5, 40.3, 50.9, 51.9};
+        std::uniform_real_distribution<double> unit(0, 1);
+        const Area& area = unit(random) < 0.35 ? kEast : kNorthEast;
+        return lonLatToMap(area.west + (area.east - area.west) * unit(random),
+                           area.south + (area.north - area.south) * unit(random));
+    }
+
+    void drawRetaliation(const Camera2D& camera, const TargetIcons& icons, double now) const {
+        const double elapsed = now - retaliation_->startedAt;
+        const double arrival = kTurnSeconds + kReturnFlightSeconds;
+        for (const Retaliation::Flight& flight : retaliation_->flights) {
+            const double age = elapsed - flight.delay - arrival;
+            if (age < 0 || age >= kMushroomSeconds) continue;
+            const Vector2 ground = GetWorldToScreen2D(toVector(flight.to), camera);
+            drawScaledAround(ground, markerScale_, [&] { drawMushroom(ground, age, flight.seed); });
+        }
+        const float size = kTargetIconPx * markerScale_;
+        for (const bool shadow : {true, false}) {
+            for (const Retaliation::Flight& flight : retaliation_->flights) {
+                const double local = elapsed - flight.delay;
+                if (local >= arrival) continue;
+                const double dx = flight.to.x - flight.from.x;
+                const double dy = flight.to.y - flight.from.y;
+                const auto bearing = static_cast<float>(std::atan2(dx, -dy) * 180 / PI);
+                float heading = bearing;
+                MapPoint position = flight.from;
+                if (local < kTurnSeconds) {
+                    const auto turned = static_cast<float>(std::clamp(local / kTurnSeconds, 0.0, 1.0));
+                    const float delta = std::fmod(bearing - flight.heading + 540.0f, 360.0f) - 180;
+                    heading = flight.heading + delta * turned * turned * (3 - 2 * turned);
+                } else {
+                    // Gathering speed like a launch.
+                    const double flown = std::pow((local - kTurnSeconds) / kReturnFlightSeconds, 2);
+                    position = {flight.from.x + dx * flown, flight.from.y + dy * flown};
+                }
+                const Vector2 at = GetWorldToScreen2D(toVector(position), camera);
+                const SnoutIcon& icon = icons.forKind(flight.kind);
+                if (shadow) {
+                    icon.draw({at.x + kShadowOffsetPx.x * markerScale_, at.y + kShadowOffsetPx.y * markerScale_}, size,
+                              heading, Fade(BLACK, kShadowOpacity));
+                } else {
+                    icon.draw(at, size, heading, WHITE);
+                }
+            }
+        }
+    }
+
     std::vector<TargetMotion::Marker> visibleMarkers(double now) const {
         std::vector<TargetMotion::Marker> markers = motion_.markersAt(now);
         std::erase_if(markers, [&](const TargetMotion::Marker& marker) {
@@ -756,6 +879,21 @@ private:
     double targetsReceivedAt_ = 0;
     // Size multiplier of target markers for the current zoom.
     float markerScale_ = 1;
+
+    struct Retaliation {
+        struct Flight {
+            MapPoint from;
+            MapPoint to;
+            float heading;
+            TargetKind kind;
+            double delay;
+            std::uint32_t seed;
+        };
+        double startedAt = 0;
+        double endsAt = 0;
+        std::vector<Flight> flights;
+    };
+    std::optional<Retaliation> retaliation_;
     std::vector<HeatCandidate> heatCandidates_;
     std::unordered_set<std::string> visibleTracks_;
     TargetMotion motion_;
@@ -1136,6 +1274,12 @@ int run(const Options& options) {
             MapView view;
             double lastInteraction = -kInteractionHoldSeconds;
             Focus focus;
+            // Quick taps on Kyiv in a row, for the retaliation.
+            int capitalTaps = 0;
+            double lastCapitalTap = -kTapStreakGapSeconds;
+#ifndef __ANDROID__
+            Vector2 pressedAt{};
+#endif
 #ifdef __ANDROID__
             TouchInput touch;
 #endif
@@ -1146,16 +1290,36 @@ int run(const Options& options) {
                 handleKeys(view);
 #ifdef __ANDROID__
                 // A tap on a target shows its name and path until the next tap.
-                if (const std::optional<Vector2> tap = touch.update(view)) {
-                    focus.trackId = scene.trackAt(viewCamera(view), now, *tap);
-                }
+                const std::optional<Vector2> tap = touch.update(view);
+                if (tap) focus.trackId = scene.trackAt(viewCamera(view), now, *tap);
 #else
                 handleMouse(view);
                 // No hover while dragging the map.
                 const bool hovering = IsCursorOnScreen() && !IsMouseButtonDown(MOUSE_BUTTON_LEFT);
                 focus.pointer = hovering ? std::optional(GetMousePosition()) : std::nullopt;
+                // A click is a press and release without dragging in between.
+                std::optional<Vector2> tap;
+                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) pressedAt = GetMousePosition();
+                if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                    const Vector2 releasedAt = GetMousePosition();
+                    if (std::hypot(releasedAt.x - pressedAt.x, releasedAt.y - pressedAt.y) <= kTapSlopPx) {
+                        tap = releasedAt;
+                    }
+                }
 #endif
-                if (!(view == before)) lastInteraction = now;
+                if (tap) {
+                    if (scene.isCapitalAt(viewCamera(view), *tap)) {
+                        capitalTaps = now - lastCapitalTap <= kTapStreakGapSeconds ? capitalTaps + 1 : 1;
+                        lastCapitalTap = now;
+                        if (capitalTaps == kTapsToRetaliate) {
+                            capitalTaps = 0;
+                            scene.retaliate(now);
+                        }
+                    } else {
+                        capitalTaps = 0;
+                    }
+                }
+                if (!(view == before) || scene.retaliating(now)) lastInteraction = now;
 #ifdef __ANDROID__
                 if (backgroundWatch.feedStopped) {
                     // Back from the background: a new connection fetches the

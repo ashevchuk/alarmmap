@@ -17,6 +17,12 @@ std::uint32_t effectSeed(std::string_view trackId);
 // Fireball, shock wave and sparks; drawn over the markers.
 void drawExplosion(Vector2 center, double age, std::uint32_t seed);
 
+inline constexpr double kMushroomSeconds = 4.2;
+
+// Nuclear mushroom cloud rising from `ground`: flash, fireball, stem, a cap
+// that burns down to smoke and a shock wave running along the ground.
+void drawMushroom(Vector2 ground, double age, std::uint32_t seed);
+
 // Smouldering mark left by an explosion; drawn under the markers. Fades out
 // by `endsAt`, the age at which the mark is gone.
 void drawScorch(Vector2 center, double age, double endsAt, std::uint32_t seed);
