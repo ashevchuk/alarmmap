@@ -1,6 +1,7 @@
 # alarmmap
 
-A desktop map of air raid alerts and aerial targets over Ukraine, updated live.
+A live map of air raid alerts and aerial targets over Ukraine for Linux and
+Android.
 
 https://github.com/user-attachments/assets/a9f0b349-eef7-4515-80f2-b65dffd42e1c
 
