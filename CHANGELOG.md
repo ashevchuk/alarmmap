@@ -6,11 +6,13 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-18
+
 ### Added
 
-- Experimental Android app: `android/build_apk.sh` builds an arm64 APK with
-  live data, touch panning, pinch zoom and tapping targets for their name and
-  path.
+- Experimental Android app, released as an APK for 64-bit ARM phones with
+  Android 8.0 or newer: live data, one-finger panning, pinch zoom, and tapping
+  a target for its name and path.
 
 ### Changed
 
@@ -58,7 +60,8 @@ project follows [Semantic Versioning](https://semver.org/).
 - Window icon.
 - Installable, relocatable build and an x86-64 AppImage.
 
-[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ashevchuk/alarmmap/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/ashevchuk/alarmmap/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ashevchuk/alarmmap/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ashevchuk/alarmmap/releases/tag/v0.1.0
