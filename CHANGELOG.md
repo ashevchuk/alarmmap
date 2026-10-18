@@ -6,6 +6,14 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-18
+
+### Changed
+
+- The target summary panel is only as wide as its content.
+- Target markers are smaller on the whole-country view and grow to full size
+  when zooming in.
+
 ## [0.1.1] - 2026-10-18
 
 ### Changed
@@ -39,6 +47,7 @@ project follows [Semantic Versioning](https://semver.org/).
 - Window icon.
 - Installable, relocatable build and an x86-64 AppImage.
 
-[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/ashevchuk/alarmmap/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ashevchuk/alarmmap/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ashevchuk/alarmmap/releases/tag/v0.1.0
