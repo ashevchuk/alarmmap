@@ -104,6 +104,7 @@ void testMatchesSiteDecoder(const std::filesystem::path& dataDirectory) {
         const json& expected = line["expected"];
         const TargetSnapshot decoded = decodeTargetSnapshot(line["packet"]);
         check(decoded == decodeTargetSnapshot(expected), "compact equals site-decoded snapshot");
+        check(decoded.skippedEntries == 0, "a recorded packet is read in full");
 
         check(decoded.serverTimeMs == expected["serverTime"].get<std::int64_t>(), "serverTime");
         check(decoded.updatedAtMs == expected["updatedAt"].get<std::int64_t>(), "updatedAt");
@@ -137,6 +138,7 @@ void testMatchesSiteDecoder(const std::filesystem::path& dataDirectory) {
 void testRestSnapshot(const std::filesystem::path& dataDirectory) {
     const json rest = readJson(dataDirectory / "rest_snapshot.json");
     const TargetSnapshot snapshot = decodeTargetSnapshot(rest);
+    check(snapshot.skippedEntries == 0, "the recorded REST snapshot is read in full");
     check(snapshot.targets.size() == rest["targets"].size(), "REST target count");
     check(snapshot.trail.size() == rest["trail"].size(), "REST trail count");
     check(snapshot.fogSeconds == rest["fog"].get<double>(), "REST fog");
@@ -164,9 +166,10 @@ void testTrackIdFormats() {
     check(snapshot.targets[0].formular == "formular" && snapshot.targets[0].iconScale == 0.85,
           "style fields");
 
-    checkThrows([] { decodeTargetSnapshot(compactPacket(json::array({"~AAEC"}),
-                                                        json::array({json::array({0, 0, 0})}))); },
-                "short GUID");
+    const TargetSnapshot shortGuid = decodeTargetSnapshot(
+        compactPacket(json::array({"~AAEC", "plain"}), json::array({json::array({0, 0, 0}), json::array({1, 0, 0})})));
+    check(shortGuid.targets.size() == 1 && shortGuid.targets[0].trackId == "plain" && shortGuid.skippedEntries == 2,
+          "a short GUID costs its target, the others stay");
 }
 
 void testAnchors() {
@@ -205,19 +208,61 @@ void testRejectsMalformed() {
     badVersion["v"] = 3;
     checkThrows([&] { decodeTargetSnapshot(badVersion); }, "unknown version");
 
-    json badCell = packet;
-    badCell["d"][8][0][1] = 5;
-    checkThrows([&] { decodeTargetSnapshot(badCell); }, "cell out of range");
-
-    json badStyle = packet;
-    badStyle["d"][8][0][2] = 3;
-    checkThrows([&] { decodeTargetSnapshot(badStyle); }, "style out of range");
-
-    json badId = packet;
-    badId["d"][8][0][0] = -1;
-    checkThrows([&] { decodeTargetSnapshot(badId); }, "negative track ID reference");
-
     checkThrows([] { decodeTargetSnapshot(json{{"unrelated", 1}}); }, "unrecognized object");
+
+    json noTime = packet;
+    noTime["d"][0] = nullptr;
+    checkThrows([&] { decodeTargetSnapshot(noTime); }, "a snapshot without its server time");
+}
+
+// One unreadable entry costs only itself: the rest of the snapshot is shown.
+void testDegradesGracefully() {
+    const json ids = json::array({"first", "second"});
+    const json rows = json::array({json::array({0, 0, 0}), json::array({1, 0, 0})});
+    const auto keepsOne = [&](const char* what, const std::function<void(json&)>& spoil) {
+        json packet = compactPacket(ids, rows);
+        spoil(packet["d"]);
+        const TargetSnapshot snapshot = decodeTargetSnapshot(packet);
+        check(snapshot.targets.size() == 1 && snapshot.targets[0].trackId == "second" &&
+                  snapshot.skippedEntries == 1,
+              what);
+    };
+    keepsOne("a target with its cell out of range is left out", [](json& d) { d[8][0][1] = 5; });
+    keepsOne("a target with its style out of range is left out", [](json& d) { d[8][0][2] = 3; });
+    keepsOne("a target with a negative track ID reference is left out", [](json& d) { d[8][0][0] = -1; });
+    keepsOne("a target row that is not a row is left out", [](json& d) { d[8][0] = "odd"; });
+
+    // Both the unreadable ID and the target using it count, so an unused bad
+    // ID is noticed too.
+    json badId = compactPacket(ids, rows);
+    badId["d"][7][0] = 42;
+    const TargetSnapshot withoutId = decodeTargetSnapshot(badId);
+    check(withoutId.targets.size() == 1 && withoutId.targets[0].trackId == "second" && withoutId.skippedEntries == 2,
+          "a target whose track ID cannot be decoded is left out");
+
+    json trail = compactPacket(ids, rows, json::array({json::array({0, 1.5, 2}), json::array({7, 1, 1})}));
+    const TargetSnapshot trailed = decodeTargetSnapshot(trail);
+    check(trailed.trail.size() == 1 && trailed.targets.size() == 2 && trailed.skippedEntries == 1,
+          "an unreadable heat cell is left out, the targets stay");
+
+    json extended = compactPacket(ids, rows);
+    extended["d"].push_back("a field added later");
+    const TargetSnapshot widened = decodeTargetSnapshot(extended);
+    check(widened.targets.size() == 2 && widened.skippedEntries == 0, "fields added at the end are ignored");
+
+    json noFog = compactPacket(ids, rows);
+    noFog["d"][3] = nullptr;
+    const TargetSnapshot fogless = decodeTargetSnapshot(noFog);
+    check(fogless.fogSeconds == 30 && fogless.targets.size() == 2 && fogless.skippedEntries == 1,
+          "a missing fog takes the site's default");
+
+    json rest = {{"targets", json::array({{{"trackId", "a"}, {"x", 0.5}, {"y", 0.5}, {"cellWidth", 0.01},
+                                           {"cellHeight", 0.02}, {"type", 8}},
+                                          "not a target"})},
+                 {"serverTime", 1000}};
+    const TargetSnapshot expanded = decodeTargetSnapshot(rest);
+    check(expanded.targets.size() == 1 && expanded.skippedEntries == 1,
+          "an unreadable target in a REST snapshot is left out");
 }
 
 void testReaderOrdering() {
@@ -254,6 +299,7 @@ int main(int argc, char** argv) {
         testAnchors();
         testCentrifugoEnvelope();
         testRejectsMalformed();
+        testDegradesGracefully();
         testReaderOrdering();
     } catch (const std::exception& error) {
         std::cerr << "unexpected exception: " << error.what() << '\n';

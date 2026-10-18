@@ -14,6 +14,8 @@ namespace {
 
 constexpr int kCompactVersion = 2;
 constexpr size_t kCompactFieldCount = 12;
+// The site's heat layer falls back to this when a snapshot names no fog.
+constexpr double kDefaultFogSeconds = 30;
 constexpr int kMaxEnvelopeDepth = 4;
 constexpr size_t kMaxRememberedEpochs = 8;
 constexpr size_t kGuidSize = 16;
@@ -56,6 +58,33 @@ const json& field(const json& object, const char* key) {
     return found == object.end() ? kNull : *found;
 }
 
+// Decodes each row on its own; a row that fails is counted and left out.
+template <typename Decode>
+void readRows(const json& rows, int& skipped, Decode decode) {
+    if (!rows.is_array()) {
+        if (!rows.is_null()) ++skipped;
+        return;
+    }
+    for (const json& row : rows) {
+        try {
+            decode(row);
+        } catch (const std::exception&) {
+            ++skipped;
+        }
+    }
+}
+
+// A header value read with a fallback; an unreadable one is counted.
+template <typename Read>
+auto readOr(int& skipped, decltype(std::declval<Read>()()) fallback, Read read) {
+    try {
+        return read();
+    } catch (const std::exception&) {
+        ++skipped;
+        return fallback;
+    }
+}
+
 const json& unwrapEnvelopes(const json& packet) {
     const json* current = &packet;
     for (int depth = 0; depth < kMaxEnvelopeDepth && current->is_object(); ++depth) {
@@ -87,11 +116,20 @@ std::string decodeTrackId(const json& value) {
 
 class CompactDecoder {
 public:
-    explicit CompactDecoder(const json& fields)
+    CompactDecoder(const json& fields, int& skipped)
         : time_(fields[0].get<std::int64_t>()),
           cells_(fields[5]),
           styles_(fields[6]) {
-        for (const json& id : fields[7]) trackIds_.push_back(decodeTrackId(id));
+        // A track ID that cannot be decoded costs only the targets using it.
+        if (!fields[7].is_array()) return;
+        for (const json& id : fields[7]) {
+            try {
+                trackIds_.push_back(decodeTrackId(id));
+            } catch (const std::exception&) {
+                trackIds_.push_back(std::nullopt);
+                ++skipped;
+            }
+        }
     }
 
     std::int64_t timestamp(const json& offset) const {
@@ -111,7 +149,9 @@ public:
 
         Target target;
         target.cell = cell(at(row, 1));
-        target.trackId = trackIds_[checkedIndex(at(row, 0), trackIds_.size(), "track ID")];
+        const std::optional<std::string>& trackId = trackIds_[checkedIndex(at(row, 0), trackIds_.size(), "track ID")];
+        if (!trackId) fail("target with an undecodable track ID");
+        target.trackId = *trackId;
         target.type = style[0].get<int>();
         target.formular = style[1].get<std::string>();
         target.detectedType = style[2].get<std::string>();
@@ -181,34 +221,41 @@ private:
     std::int64_t time_;
     const json& cells_;
     const json& styles_;
-    std::vector<std::string> trackIds_;
+    std::vector<std::optional<std::string>> trackIds_;
 };
 
 TargetSnapshot decodeCompact(const json& packet) {
     const json& fields = field(packet, "d");
-    if (field(packet, "v") != kCompactVersion || !fields.is_array() ||
-        fields.size() != kCompactFieldCount) {
+    // Fields the site adds after the known ones are ignored.
+    if (field(packet, "v") != kCompactVersion || !fields.is_array() || fields.size() < kCompactFieldCount) {
         fail("unsupported target snapshot format");
     }
-    const CompactDecoder decoder(fields);
+    if (!fields[0].is_number_integer()) fail("target snapshot without its server time");
 
     TargetSnapshot snapshot;
-    for (const json& row : fields[8]) snapshot.targets.push_back(decoder.target(row));
-    for (const json& row : fields[9]) snapshot.trail.push_back(decoder.heat(row));
-    for (const json& row : fields[10]) snapshot.extrapolationTrail.push_back(decoder.heat(row));
+    int& skipped = snapshot.skippedEntries;
+    const CompactDecoder decoder(fields, skipped);
+    readRows(fields[8], skipped, [&](const json& row) { snapshot.targets.push_back(decoder.target(row)); });
+    readRows(fields[9], skipped, [&](const json& row) { snapshot.trail.push_back(decoder.heat(row)); });
+    readRows(fields[10], skipped, [&](const json& row) { snapshot.extrapolationTrail.push_back(decoder.heat(row)); });
     snapshot.serverTimeMs = fields[0].get<std::int64_t>();
-    snapshot.updatedAtMs = decoder.timestamp(fields[1]);
-    snapshot.extrapolationUpdatedAtMs = decoder.timestamp(fields[2]);
-    snapshot.fogSeconds = fields[3].get<double>();
-    snapshot.snapshotTtlSeconds = fields[4].get<double>();
+    snapshot.updatedAtMs = readOr(skipped, std::int64_t{0}, [&] { return decoder.timestamp(fields[1]); });
+    snapshot.extrapolationUpdatedAtMs = readOr(skipped, std::int64_t{0}, [&] { return decoder.timestamp(fields[2]); });
+    snapshot.fogSeconds = readOr(skipped, kDefaultFogSeconds, [&] { return fields[3].get<double>(); });
+    snapshot.snapshotTtlSeconds = readOr(skipped, 0.0, [&] { return fields[4].get<double>(); });
 
     const json& movement = fields[11];
     if (!movement.is_null()) {
-        Movement decoded;
-        for (const json& row : movement[0]) decoded.from.push_back(decoder.target(row));
-        decoded.fromUpdatedAtMs = decoder.timestamp(movement[1]);
-        decoded.startedAtMs = decoder.timestamp(movement[2]);
-        snapshot.movement = std::move(decoded);
+        try {
+            Movement decoded;
+            readRows(at(movement, 0), skipped, [&](const json& row) { decoded.from.push_back(decoder.target(row)); });
+            decoded.fromUpdatedAtMs = decoder.timestamp(at(movement, 1));
+            decoded.startedAtMs = decoder.timestamp(at(movement, 2));
+            snapshot.movement = std::move(decoded);
+        } catch (const std::exception&) {
+            // Without its times the movement cannot be animated; targets just appear.
+            ++skipped;
+        }
     }
     return snapshot;
 }
@@ -284,13 +331,11 @@ HeatCell expandedHeat(const json& object) {
 
 TargetSnapshot decodeExpanded(const json& object) {
     TargetSnapshot snapshot;
-    for (const json& target : object["targets"]) snapshot.targets.push_back(expandedTarget(target));
-    for (const json& heat : valueOr(field(object, "trail"), json::array())) {
-        snapshot.trail.push_back(expandedHeat(heat));
-    }
-    for (const json& heat : valueOr(field(object, "extrapolationTrail"), json::array())) {
-        snapshot.extrapolationTrail.push_back(expandedHeat(heat));
-    }
+    int& skipped = snapshot.skippedEntries;
+    readRows(object["targets"], skipped, [&](const json& target) { snapshot.targets.push_back(expandedTarget(target)); });
+    readRows(field(object, "trail"), skipped, [&](const json& heat) { snapshot.trail.push_back(expandedHeat(heat)); });
+    readRows(field(object, "extrapolationTrail"), skipped,
+             [&](const json& heat) { snapshot.extrapolationTrail.push_back(expandedHeat(heat)); });
     snapshot.serverTimeMs = valueOr<std::int64_t>(field(object, "serverTime"), 0);
     snapshot.updatedAtMs = valueOr<std::int64_t>(field(object, "updatedAt"), 0);
     snapshot.extrapolationUpdatedAtMs =
@@ -300,11 +345,16 @@ TargetSnapshot decodeExpanded(const json& object) {
 
     const json& movement = field(object, "movement");
     if (movement.is_object()) {
-        Movement decoded;
-        for (const json& target : movement["from"]) decoded.from.push_back(expandedTarget(target));
-        decoded.fromUpdatedAtMs = valueOr<std::int64_t>(field(movement, "fromUpdatedAt"), 0);
-        decoded.startedAtMs = valueOr<std::int64_t>(field(movement, "startedAt"), 0);
-        snapshot.movement = std::move(decoded);
+        try {
+            Movement decoded;
+            readRows(field(movement, "from"), skipped,
+                     [&](const json& target) { decoded.from.push_back(expandedTarget(target)); });
+            decoded.fromUpdatedAtMs = valueOr<std::int64_t>(field(movement, "fromUpdatedAt"), 0);
+            decoded.startedAtMs = valueOr<std::int64_t>(field(movement, "startedAt"), 0);
+            snapshot.movement = std::move(decoded);
+        } catch (const std::exception&) {
+            ++skipped;
+        }
     }
     return snapshot;
 }

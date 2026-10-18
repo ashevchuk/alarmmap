@@ -54,10 +54,14 @@ public:
         ChannelResult& result = channels_[channel];
         try {
             if (channel == alarmmap::kTargetsChannel) {
-                if (reader_.read(payload)) {
-                    ++result.parsed;
-                } else {
+                const std::optional<alarmmap::TargetSnapshot> snapshot = reader_.read(payload);
+                if (!snapshot) {
                     ++result.skipped;  // an older or repeated snapshot, as the app drops it
+                } else if (snapshot->skippedEntries > 0) {
+                    // The app shows the rest; for this check it means the format changed.
+                    throw std::runtime_error(std::to_string(snapshot->skippedEntries) + " entries unreadable");
+                } else {
+                    ++result.parsed;
                 }
             } else if (channel == alarmmap::kAlertsChannel) {
                 // The app gets by with part of a payload; for this check any

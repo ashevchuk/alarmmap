@@ -13,6 +13,9 @@ project follows [Semantic Versioning](https://semver.org/).
   update sent as a JSON string is now read, an update missing its order or
   with an odd region entry still applies what it can, and a late update no
   longer rolls back a newer one.
+- A target, heat cell or track ID the program cannot read no longer drops the
+  whole target snapshot: only that entry is left out, and fields the site
+  may add later are ignored.
 
 ## [0.2.2] - 2026-10-18
 

@@ -782,6 +782,9 @@ public:
         if (channel == kTargetsChannel) {
             std::optional<TargetSnapshot> snapshot = reader_.read(payload);
             if (!snapshot) return;
+            if (snapshot->skippedEntries > 0) {
+                std::cout << "feed: targets read in part: skipped entries=" << snapshot->skippedEntries << '\n';
+            }
             std::lock_guard lock(mutex_);
             // The REST snapshot and a queued publication can arrive out of order.
             if (data_.targets && snapshot->serverTimeMs < data_.targets->serverTimeMs) return;
