@@ -47,8 +47,13 @@ void MapView::reset() {
 
 void MapView::clamp() {
     zoom_ = std::clamp(zoom_, kMinZoom, kMaxZoom);
-    center_.x = std::clamp(center_.x, 0.0, kMapWidth);
-    center_.y = std::clamp(center_.y, 0.0, kMapHeight);
+    // The centre's freedom grows from none at the minimum zoom to the whole
+    // map plane at kFreePanZoom, so zooming out glides back to the middle.
+    const double freedom = std::clamp((zoom_ - kMinZoom) / (kFreePanZoom - kMinZoom), 0.0, 1.0);
+    const double reachX = freedom * kMapWidth / 2;
+    const double reachY = freedom * kMapHeight / 2;
+    center_.x = std::clamp(center_.x, kMapWidth / 2 - reachX, kMapWidth / 2 + reachX);
+    center_.y = std::clamp(center_.y, kMapHeight / 2 - reachY, kMapHeight / 2 + reachY);
 }
 
 }  // namespace alarmmap

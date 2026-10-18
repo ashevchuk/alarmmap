@@ -11,6 +11,8 @@ class MapView {
 public:
     static constexpr double kMinZoom = 1;
     static constexpr double kMaxZoom = 48;
+    // From this zoom on the centre may reach any point of the map plane.
+    static constexpr double kFreePanZoom = 2;
     static constexpr double kMarginPx = 24;
 
     void setViewport(double width, double height);

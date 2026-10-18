@@ -288,6 +288,10 @@ void testMapView() {
     view.zoomAt(screen, 1e-6);
     check(near(view.zoom(), MapView::kMinZoom, 1e-12), "zoom floored");
 
+    view.zoomAt({1500, 900}, 4);
+    view.zoomAt({100, 100}, 1e-6);
+    check(view.center() == MapPoint{kMapWidth / 2, kMapHeight / 2}, "minimum zoom recentres the map");
+
     view.reset();
     check(view.zoom() == 1 && view.center() == MapPoint{kMapWidth / 2, kMapHeight / 2}, "reset");
 }
