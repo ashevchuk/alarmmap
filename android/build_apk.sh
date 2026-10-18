@@ -1,19 +1,12 @@
 #!/bin/sh
-# Builds an arm64 APK that shows a bundled snapshot of targets and alerts.
-# Usage: android/build_apk.sh TARGETS_JSON ALERTS_JSON
+# Builds an arm64 APK of alarmmap.
+# Usage: android/build_apk.sh
 #
 # Needs ANDROID_HOME (default ~/Android/Sdk) with an NDK, build-tools and a
-# platform, the region geometry the desktop build caches in
-# ~/.cache/alarmmap, and Noto Sans Medium. Output: build-android/alarmmap.apk,
-# signed with the debug key in ~/.android/debug.keystore.
+# platform, gpg for the curl signature, and Noto Sans Medium. Output:
+# build-android/alarmmap.apk, signed with the debug key in
+# ~/.android/debug.keystore.
 set -eu
-
-if [ $# -ne 2 ]; then
-    echo "usage: $0 TARGETS_JSON ALERTS_JSON" >&2
-    exit 2
-fi
-targets="$(realpath "$1")"
-alerts="$(realpath "$2")"
 
 root="$(realpath "$(dirname "$0")/..")"
 out="$root/build-android"
@@ -21,13 +14,17 @@ sdk="${ANDROID_HOME:-$HOME/Android/Sdk}"
 ndk="$(find "$sdk/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
 build_tools="$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
 platform="$(find "$sdk/platforms" -mindepth 1 -maxdepth 1 -name 'android-[0-9]*' | sort -V | tail -n 1)"
-geometry="$HOME/.cache/alarmmap/regions-standard-v1.geojson"
 font=/usr/share/fonts/noto/NotoSans-Medium.ttf
 min_sdk=26
 abi=arm64-v8a
 raylib_version=6.2
+mbedtls_version=3.6.7
+mbedtls_sha256=a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
+curl_version=8.22.0
+# Daniel Stenberg signs curl releases.
+curl_signing_key=27EDEAF22F3ABCEB50DB9A125CC908FDB71E12C2
 
-for path in "$ndk" "$build_tools" "$platform" "$targets" "$alerts" "$geometry" "$font"; do
+for path in "$ndk" "$build_tools" "$platform" "$font"; do
     if [ ! -e "$path" ]; then
         echo "missing: $path" >&2
         exit 1
@@ -47,18 +44,62 @@ if [ ! -f "$out/sysroot/lib/libraylib.a" ]; then
     cmake --install "$out/raylib-build"
 fi
 
+mkdir -p "$out/src"
+if [ ! -f "$out/sysroot/lib/libmbedtls.a" ]; then
+    archive="$out/src/mbedtls-$mbedtls_version.tar.bz2"
+    curl -fsSL -o "$archive" \
+        "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$mbedtls_version/mbedtls-$mbedtls_version.tar.bz2"
+    echo "$mbedtls_sha256  $archive" | sha256sum -c -
+    tar -xjf "$archive" -C "$out/src"
+    # shellcheck disable=SC2086
+    cmake -S "$out/src/mbedtls-$mbedtls_version" -B "$out/mbedtls-build" -G Ninja $android_cmake \
+        -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF \
+        -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DMBEDTLS_FATAL_WARNINGS=OFF -DCMAKE_INSTALL_PREFIX="$out/sysroot" \
+        -DCMAKE_C_FLAGS="-DMBEDTLS_PLATFORM_DEV_RANDOM=\\\"/dev/urandom\\\""
+    cmake --build "$out/mbedtls-build"
+    cmake --install "$out/mbedtls-build"
+fi
+
+# mbedTLS calls getrandom() only on glibc and reads /dev/random elsewhere,
+# which blocks on older Android kernels until their entropy pool fills up;
+# the build points it at /dev/urandom, the same generator without the wait.
+#
+# mbedTLS reads every certificate in a directory, so libcurl can use the
+# system store as is; OpenSSL would look certificates up by a hash that
+# differs from Android's file names.
+if [ ! -f "$out/sysroot/lib/libcurl.a" ]; then
+    archive="$out/src/curl-$curl_version.tar.xz"
+    curl -fsSL -o "$archive" "https://curl.se/download/curl-$curl_version.tar.xz"
+    curl -fsSL -o "$archive.asc" "https://curl.se/download/curl-$curl_version.tar.xz.asc"
+    keyring="$(mktemp -d)"
+    curl -fsSL https://daniel.haxx.se/mykey.asc | gpg --homedir "$keyring" --quiet --import
+    gpg --homedir "$keyring" --status-fd 1 --verify "$archive.asc" "$archive" 2>/dev/null |
+        grep -q "VALIDSIG $curl_signing_key"
+    rm -rf "$keyring"
+    tar -xJf "$archive" -C "$out/src"
+    # shellcheck disable=SC2086
+    cmake -S "$out/src/curl-$curl_version" -B "$out/curl-build" -G Ninja $android_cmake \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_FIND_ROOT_PATH="$out/sysroot" -DCMAKE_PREFIX_PATH="$out/sysroot" \
+        -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_CURL_EXE=OFF -DBUILD_TESTING=OFF \
+        -DBUILD_EXAMPLES=OFF -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF -DENABLE_CURL_MANUAL=OFF \
+        -DCURL_USE_OPENSSL=OFF -DCURL_USE_MBEDTLS=ON -DCURL_USE_LIBPSL=OFF -DCURL_USE_LIBSSH2=OFF \
+        -DUSE_LIBIDN2=OFF -DUSE_NGHTTP2=OFF -DCURL_ZSTD=OFF -DCURL_BROTLI=OFF \
+        -DCURL_CA_BUNDLE=none -DCURL_CA_PATH=/system/etc/security/cacerts -DCURL_CA_FALLBACK=OFF \
+        -DCMAKE_INSTALL_PREFIX="$out/sysroot"
+    cmake --build "$out/curl-build"
+    cmake --install "$out/curl-build"
+fi
+
 # shellcheck disable=SC2086
 cmake -S "$root" -B "$out/app-build" -G Ninja $android_cmake -DANDROID_STL=c++_static \
-    -DCMAKE_BUILD_TYPE=Release -Draylib_DIR="$out/sysroot/lib/cmake/raylib"
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_FIND_ROOT_PATH="$out/sysroot" -DCMAKE_PREFIX_PATH="$out/sysroot"
 cmake --build "$out/app-build" --target alarmmap
 
 stage="$out/apk"
 rm -rf "$stage"
 mkdir -p "$stage/assets/fonts" "$stage/res/drawable" "$stage/lib/$abi"
-cp "$root/data/cities.geojson" "$root/data/crimea.geojson" "$geometry" "$stage/assets/"
+cp "$root/data/cities.geojson" "$root/data/crimea.geojson" "$stage/assets/"
 cp "$font" "$stage/assets/fonts/"
-cp "$targets" "$stage/assets/targets.json"
-cp "$alerts" "$stage/assets/alerts.json"
 cp "$root/packaging/alarmmap.png" "$stage/res/drawable/icon.png"
 cp "$out/app-build/libalarmmap.so" "$stage/lib/$abi/"
 "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" "$stage/lib/$abi/libalarmmap.so"

@@ -34,11 +34,13 @@
 #include <raylib.h>
 #include <rlgl.h>
 
+#include <curl/curl.h>
+
 #ifdef __ANDROID__
 #include <android/asset_manager.h>
+#include <android/log.h>
 #include <android_native_app_glue.h>
-#else
-#include <curl/curl.h>
+#include <unistd.h>
 #endif
 
 #include <algorithm>
@@ -91,7 +93,9 @@ constexpr double kDetailedTolerance = 0.002;
 constexpr double kFramesPerSecond = 30;
 constexpr double kInteractiveFramesPerSecond = 60;
 constexpr double kInteractionHoldSeconds = 1;
+#ifndef __ANDROID__
 constexpr double kWheelZoomStep = 1.25;
+#endif
 constexpr double kKeyZoomStep = 1.5;
 constexpr int kInitialWidth = 1600;
 constexpr int kInitialHeight = 1000;
@@ -228,12 +232,36 @@ double nowSeconds() {
 // Files the APK carries. Android exposes assets only through AAssetManager,
 // so they are copied into internal storage, where the regular file code
 // reads them as data and cache.
-constexpr const char* kBundledAssets[] = {
-    "cities.geojson", "crimea.geojson", "fonts/NotoSans-Medium.ttf",
-    "regions-standard-v1.geojson", "targets.json", "alerts.json",
-};
+constexpr const char* kBundledAssets[] = {"cities.geojson", "crimea.geojson", "fonts/NotoSans-Medium.ttf"};
 
 fs::path androidStorage() { return GetAndroidApp()->activity->internalDataPath; }
+
+// Standard output and error go nowhere on Android; a thread copies them to
+// logcat line by line.
+void redirectOutputToLogcat() {
+    int pipeEnds[2];
+    if (pipe(pipeEnds) != 0) return;
+    std::cout.setf(std::ios::unitbuf);
+    setvbuf(stdout, nullptr, _IOLBF, 0);
+    setvbuf(stderr, nullptr, _IONBF, 0);
+    dup2(pipeEnds[1], STDOUT_FILENO);
+    dup2(pipeEnds[1], STDERR_FILENO);
+    std::thread([readEnd = pipeEnds[0]] {
+        std::string line;
+        char buffer[512];
+        ssize_t count;
+        while ((count = read(readEnd, buffer, sizeof buffer)) > 0) {
+            for (ssize_t i = 0; i < count; ++i) {
+                if (buffer[i] != '\n') {
+                    line += buffer[i];
+                    continue;
+                }
+                __android_log_write(ANDROID_LOG_INFO, "alarmmap", line.c_str());
+                line.clear();
+            }
+        }
+    }).detach();
+}
 
 void extractAssets() {
     AAssetManager* manager = GetAndroidApp()->activity->assetManager;
@@ -854,6 +882,7 @@ void waitForFirstData(const LiveState& state, LiveData& data) {
               << " s, rendering what arrived\n";
 }
 
+#ifndef __ANDROID__
 // Wheel zooms at the cursor, left button drags.
 void handleMouse(MapView& view) {
     const Vector2 mouse = GetMousePosition();
@@ -865,6 +894,7 @@ void handleMouse(MapView& view) {
         if (delta.x != 0 || delta.y != 0) view.panByPixels(delta.x, delta.y);
     }
 }
+#endif
 
 // + and - zoom at the centre, 0, Home or R show the whole country.
 void handleKeys(MapView& view) {
@@ -1098,18 +1128,16 @@ int run(const Options& options) {
 }  // namespace
 
 int main(int argc, char** argv) {
-#ifndef __ANDROID__
     // Before any thread starts: curl_global_init is not thread-safe.
     curl_global_init(CURL_GLOBAL_DEFAULT);
+#ifdef __ANDROID__
+    redirectOutputToLogcat();
 #endif
     int exitCode = 1;
     try {
-        Options options = parseOptions(argc, argv);
+        const Options options = parseOptions(argc, argv);
 #ifdef __ANDROID__
-        // Without network access the app shows the snapshot its APK carries.
         extractAssets();
-        options.targets = androidStorage() / "targets.json";
-        options.alerts = androidStorage() / "alerts.json";
 #endif
         if (options.version) {
             std::cout << "alarmmap " ALARMMAP_VERSION "\n";
@@ -1119,13 +1147,7 @@ int main(int argc, char** argv) {
         }
     } catch (const std::exception& error) {
         std::cerr << "alarmmap: " << error.what() << '\n';
-#ifdef __ANDROID__
-        // Standard error goes nowhere on Android; raylib's log reaches logcat.
-        TraceLog(LOG_ERROR, "alarmmap: %s", error.what());
-#endif
     }
-#ifndef __ANDROID__
     curl_global_cleanup();
-#endif
     return exitCode;
 }

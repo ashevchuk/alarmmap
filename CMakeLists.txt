@@ -15,14 +15,8 @@ FetchContent_Declare(earcut
     SOURCE_SUBDIR none)
 FetchContent_MakeAvailable(nlohmann_json earcut)
 
-if(ANDROID)
-    # Network access is not ported yet; the app shows the data its APK carries.
-    set(NETWORK_SOURCES src/offline_network.cpp)
-else()
-    # WebSocket support in libcurl is stable since 8.11.
-    find_package(CURL 8.11 REQUIRED)
-    set(NETWORK_SOURCES src/http.cpp src/live_feed.cpp)
-endif()
+# WebSocket support in libcurl is stable since 8.11.
+find_package(CURL 8.11 REQUIRED)
 find_package(raylib 5.5 REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -34,7 +28,8 @@ add_library(alarmmap_core STATIC
     src/cities.cpp
     src/heat_cells.cpp
     src/heat_timing.cpp
-    ${NETWORK_SOURCES}
+    src/http.cpp
+    src/live_feed.cpp
     src/map_update.cpp
     src/map_view.cpp
     src/marker_layout.cpp
@@ -47,10 +42,7 @@ add_library(alarmmap_core STATIC
     src/vector_tile.cpp)
 target_include_directories(alarmmap_core PUBLIC src)
 target_include_directories(alarmmap_core SYSTEM PRIVATE ${earcut_SOURCE_DIR}/include)
-target_link_libraries(alarmmap_core PUBLIC nlohmann_json::nlohmann_json)
-if(NOT ANDROID)
-    target_link_libraries(alarmmap_core PUBLIC CURL::libcurl)
-endif()
+target_link_libraries(alarmmap_core PUBLIC nlohmann_json::nlohmann_json CURL::libcurl)
 target_compile_options(alarmmap_core PRIVATE ${WARNING_FLAGS})
 
 set(APP_SOURCES
