@@ -39,6 +39,15 @@ chmod +x alarmmap-*-x86_64.AppImage
 The AppImage runs on x86-64 Linux with glibc 2.35 or newer (Ubuntu 22.04,
 Debian 12, Fedora 36 and later) and an X11 or XWayland session.
 
+### Android
+
+The release also has an APK for 64-bit ARM phones with Android 8.0 or newer
+and OpenGL ES 3.0. Download `alarmmap-*-arm64.apk` on the phone and open it;
+Android asks once to allow installing apps from that source. The Android
+version is experimental. It shows a coloured dot for the connection state
+instead of the status text, and stops the live feed while it is in the
+background.
+
 ## Controls
 
 | Input | Action |
@@ -48,6 +57,9 @@ Debian 12, Fedora 36 and later) and an X11 or XWayland session.
 | `+` / `-` | Zoom at the centre |
 | `0`, `Home`, `R` | Show the whole country |
 | Hover over a target | Show its name and path |
+
+On Android, drag with one finger to pan, pinch to zoom and tap a target to
+show its name and path; tap elsewhere to hide them.
 
 ## Build from source
 
@@ -80,6 +92,10 @@ alarmmap --version
 Region geometry and basemap tiles are cached in `$XDG_CACHE_HOME/alarmmap`
 (by default `~/.cache/alarmmap`).
 
+`android/build_apk.sh` builds the APK with the Android SDK and NDK; it builds
+raylib, mbedTLS and libcurl for Android itself. See the comment at its top
+for what it needs and how to sign with your own key.
+
 ## Data and credits
 
 - Alerts and targets: [map.ukrainealarm.com](https://map.ukrainealarm.com).
@@ -87,7 +103,7 @@ Region geometry and basemap tiles are cached in `$XDG_CACHE_HOME/alarmmap`
   © OpenStreetMap contributors.
 - Place names: [GeoNames](https://www.geonames.org), CC BY 4.0.
 - Crimea outline: [Natural Earth](https://www.naturalearthdata.com), public domain.
-- The AppImage bundles the Noto Sans font, SIL Open Font License 1.1.
+- The AppImage and the APK bundle the Noto Sans font, SIL Open Font License 1.1.
 
 ## License
 
