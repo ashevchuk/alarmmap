@@ -51,6 +51,14 @@ if [ ! -f "$out/sysroot/lib/libmbedtls.a" ]; then
         "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$mbedtls_version/mbedtls-$mbedtls_version.tar.bz2"
     echo "$mbedtls_sha256  $archive" | sha256sum -c -
     tar -xjf "$archive" -C "$out/src"
+    # libcurl shares one random generator between connections, and the app
+    # opens several at once; mbedTLS guards it only with threading enabled.
+    # This must be in the installed config header: it changes struct layouts
+    # that libcurl compiles against.
+    for option in MBEDTLS_THREADING_C MBEDTLS_THREADING_PTHREAD; do
+        python3 "$out/src/mbedtls-$mbedtls_version/scripts/config.py" \
+            -f "$out/src/mbedtls-$mbedtls_version/include/mbedtls/mbedtls_config.h" set "$option"
+    done
     # shellcheck disable=SC2086
     cmake -S "$out/src/mbedtls-$mbedtls_version" -B "$out/mbedtls-build" -G Ninja $android_cmake \
         -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF \
