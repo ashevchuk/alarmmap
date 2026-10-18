@@ -37,20 +37,23 @@ for path in "$ndk" "$build_tools" "$platform" "${font:-NotoSans-Medium.ttf}"; do
 done
 toolchain="$ndk/build/cmake/android.toolchain.cmake"
 android_cmake="-DCMAKE_TOOLCHAIN_FILE=$toolchain -DANDROID_ABI=$abi -DANDROID_PLATFORM=android-$min_sdk"
+# Libraries built for one ABI and API level do not link into another, so
+# each pair gets its own build and install directories.
+target="$out/$abi-api$min_sdk"
 
-if [ ! -f "$out/sysroot/lib/libraylib.a" ]; then
+if [ ! -f "$target/sysroot/lib/libraylib.a" ]; then
     [ -d "$out/raylib" ] || git clone --depth 1 --branch "$raylib_version" \
         https://github.com/raysan5/raylib.git "$out/raylib"
     # shellcheck disable=SC2086
-    cmake -S "$out/raylib" -B "$out/raylib-build" -G Ninja $android_cmake \
+    cmake -S "$out/raylib" -B "$target/raylib-build" -G Ninja $android_cmake \
         -DPLATFORM=Android -DOPENGL_VERSION="ES 3.0" -DCMAKE_BUILD_TYPE=Release \
-        -DBUILD_EXAMPLES=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX="$out/sysroot"
-    cmake --build "$out/raylib-build"
-    cmake --install "$out/raylib-build"
+        -DBUILD_EXAMPLES=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX="$target/sysroot"
+    cmake --build "$target/raylib-build"
+    cmake --install "$target/raylib-build"
 fi
 
 mkdir -p "$out/src"
-if [ ! -f "$out/sysroot/lib/libmbedtls.a" ]; then
+if [ ! -f "$target/sysroot/lib/libmbedtls.a" ]; then
     archive="$out/src/mbedtls-$mbedtls_version.tar.bz2"
     curl -fsSL -o "$archive" \
         "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$mbedtls_version/mbedtls-$mbedtls_version.tar.bz2"
@@ -65,12 +68,12 @@ if [ ! -f "$out/sysroot/lib/libmbedtls.a" ]; then
             -f "$out/src/mbedtls-$mbedtls_version/include/mbedtls/mbedtls_config.h" set "$option"
     done
     # shellcheck disable=SC2086
-    cmake -S "$out/src/mbedtls-$mbedtls_version" -B "$out/mbedtls-build" -G Ninja $android_cmake \
+    cmake -S "$out/src/mbedtls-$mbedtls_version" -B "$target/mbedtls-build" -G Ninja $android_cmake \
         -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF \
-        -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DMBEDTLS_FATAL_WARNINGS=OFF -DCMAKE_INSTALL_PREFIX="$out/sysroot" \
+        -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DMBEDTLS_FATAL_WARNINGS=OFF -DCMAKE_INSTALL_PREFIX="$target/sysroot" \
         -DCMAKE_C_FLAGS="-DMBEDTLS_PLATFORM_DEV_RANDOM=\\\"/dev/urandom\\\""
-    cmake --build "$out/mbedtls-build"
-    cmake --install "$out/mbedtls-build"
+    cmake --build "$target/mbedtls-build"
+    cmake --install "$target/mbedtls-build"
 fi
 
 # mbedTLS calls getrandom() only on glibc and reads /dev/random elsewhere,
@@ -80,7 +83,7 @@ fi
 # mbedTLS reads every certificate in a directory, so libcurl can use the
 # system store as is; OpenSSL would look certificates up by a hash that
 # differs from Android's file names.
-if [ ! -f "$out/sysroot/lib/libcurl.a" ]; then
+if [ ! -f "$target/sysroot/lib/libcurl.a" ]; then
     archive="$out/src/curl-$curl_version.tar.xz"
     curl -fsSL -o "$archive" "https://curl.se/download/curl-$curl_version.tar.xz"
     curl -fsSL -o "$archive.asc" "https://curl.se/download/curl-$curl_version.tar.xz.asc"
@@ -91,22 +94,22 @@ if [ ! -f "$out/sysroot/lib/libcurl.a" ]; then
     rm -rf "$keyring"
     tar -xJf "$archive" -C "$out/src"
     # shellcheck disable=SC2086
-    cmake -S "$out/src/curl-$curl_version" -B "$out/curl-build" -G Ninja $android_cmake \
-        -DCMAKE_BUILD_TYPE=Release -DCMAKE_FIND_ROOT_PATH="$out/sysroot" -DCMAKE_PREFIX_PATH="$out/sysroot" \
+    cmake -S "$out/src/curl-$curl_version" -B "$target/curl-build" -G Ninja $android_cmake \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_FIND_ROOT_PATH="$target/sysroot" -DCMAKE_PREFIX_PATH="$target/sysroot" \
         -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_CURL_EXE=OFF -DBUILD_TESTING=OFF \
         -DBUILD_EXAMPLES=OFF -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF -DENABLE_CURL_MANUAL=OFF \
         -DCURL_USE_OPENSSL=OFF -DCURL_USE_MBEDTLS=ON -DCURL_USE_LIBPSL=OFF -DCURL_USE_LIBSSH2=OFF \
         -DUSE_LIBIDN2=OFF -DUSE_NGHTTP2=OFF -DCURL_ZSTD=OFF -DCURL_BROTLI=OFF \
         -DCURL_CA_BUNDLE=none -DCURL_CA_PATH=/system/etc/security/cacerts -DCURL_CA_FALLBACK=OFF \
-        -DCMAKE_INSTALL_PREFIX="$out/sysroot"
-    cmake --build "$out/curl-build"
-    cmake --install "$out/curl-build"
+        -DCMAKE_INSTALL_PREFIX="$target/sysroot"
+    cmake --build "$target/curl-build"
+    cmake --install "$target/curl-build"
 fi
 
 # shellcheck disable=SC2086
-cmake -S "$root" -B "$out/app-build" -G Ninja $android_cmake -DANDROID_STL=c++_static \
-    -DCMAKE_BUILD_TYPE=Release -DCMAKE_FIND_ROOT_PATH="$out/sysroot" -DCMAKE_PREFIX_PATH="$out/sysroot"
-cmake --build "$out/app-build" --target alarmmap
+cmake -S "$root" -B "$target/app-build" -G Ninja $android_cmake -DANDROID_STL=c++_static \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_FIND_ROOT_PATH="$target/sysroot" -DCMAKE_PREFIX_PATH="$target/sysroot"
+cmake --build "$target/app-build" --target alarmmap
 
 stage="$out/apk"
 rm -rf "$stage"
@@ -114,7 +117,7 @@ mkdir -p "$stage/assets/fonts" "$stage/res/drawable" "$stage/lib/$abi"
 cp "$root/data/cities.geojson" "$root/data/crimea.geojson" "$stage/assets/"
 cp "$font" "$stage/assets/fonts/"
 cp "$root/packaging/alarmmap.png" "$stage/res/drawable/icon.png"
-cp "$out/app-build/libalarmmap.so" "$stage/lib/$abi/"
+cp "$target/app-build/libalarmmap.so" "$stage/lib/$abi/"
 "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" "$stage/lib/$abi/libalarmmap.so"
 
 version="$(sed -n 's/^project(alarmmap VERSION \([0-9.]*\).*/\1/p' "$root/CMakeLists.txt")"
