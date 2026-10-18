@@ -41,7 +41,7 @@ Debian 12, Fedora 36 and later) and an X11 or XWayland session.
 
 ### Android
 
-The release also has an APK for 64-bit ARM phones with Android 8.0 or newer
+The release also has an APK for 64-bit ARM phones with Android 7.0 or newer
 and OpenGL ES 3.0. Download `alarmmap-*-arm64.apk` on the phone and open it;
 Android asks once to allow installing apps from that source. The Android
 version is experimental. It shows a coloured dot for the connection state

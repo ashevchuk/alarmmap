@@ -20,7 +20,7 @@ build_tools="$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V
 # A stable API level: the newest platform in an SDK can be a preview.
 platform="$sdk/platforms/android-36"
 font="$(find /usr/share/fonts -name NotoSans-Medium.ttf | head -n 1)"
-min_sdk=26
+min_sdk=24
 abi=arm64-v8a
 raylib_version=6.2
 mbedtls_version=3.6.7

@@ -6,6 +6,15 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The Android app runs on Android 7.0 and newer instead of 8.0.
+
+### Fixed
+
+- The Android app no longer hangs on start on some phones while it
+  triangulates region outlines.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added
