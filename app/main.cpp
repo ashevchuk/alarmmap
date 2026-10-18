@@ -105,7 +105,8 @@ constexpr float kPanelPaddingPx = 12;
 constexpr float kPanelRowPx = 28;
 constexpr float kPanelIconPx = 22;
 constexpr float kPanelFontPx = 15;
-constexpr float kPanelWidthPx = 230;
+constexpr float kPanelIconGapPx = 10;
+constexpr float kPanelNumberGapPx = 20;
 constexpr float kTargetIconPx = 34;
 constexpr Vector2 kShadowOffsetPx = {3, 4};
 // A region whose alert has just started pulses for a while, fading out.
@@ -495,9 +496,20 @@ private:
         }
         if (counts.empty()) return;
 
+        float labelWidth = 0;
+        float numberWidth = 0;
+        for (const auto& [kind, label] : kKindLabels) {
+            const auto count = counts.find(kind);
+            if (count == counts.end()) continue;
+            labelWidth = std::max(labelWidth, MeasureTextEx(font_, label, kPanelFontPx, kTextSpacingPx).x);
+            const std::string number = std::to_string(count->second);
+            numberWidth = std::max(numberWidth, MeasureTextEx(font_, number.c_str(), kPanelFontPx, kTextSpacingPx).x);
+        }
+        const float panelWidth = 2 * kPanelPaddingPx + kPanelIconPx + kPanelIconGapPx + labelWidth +
+                                 kPanelNumberGapPx + numberWidth;
         const float panelHeight = 2 * kPanelPaddingPx + kPanelRowPx * counts.size();
-        const Rectangle panel = {kStatusMarginPx, height - kStatusMarginPx - panelHeight,
-                                 kPanelWidthPx, panelHeight};
+        const Rectangle panel = {kStatusMarginPx, height - kStatusMarginPx - panelHeight, panelWidth,
+                                 panelHeight};
         DrawRectangleRounded(panel, 0.12f, 8, kPanelBackground);
         DrawRectangleRoundedLinesEx(panel, 0.12f, 8, 1, kPanelBorder);
         float rowTop = panel.y + kPanelPaddingPx;
@@ -508,14 +520,12 @@ private:
             icons.forKind(kind).draw({panel.x + kPanelPaddingPx + kPanelIconPx / 2, rowCenter},
                                      kPanelIconPx, 0);
             const float textTop = rowCenter - kPanelFontPx * 0.62f;
-            DrawTextEx(font_, label, {panel.x + kPanelPaddingPx + kPanelIconPx + 10, textTop},
+            DrawTextEx(font_, label, {panel.x + kPanelPaddingPx + kPanelIconPx + kPanelIconGapPx, textTop},
                        kPanelFontPx, kTextSpacingPx, kPanelText);
             const std::string number = std::to_string(count->second);
-            const float numberWidth =
-                MeasureTextEx(font_, number.c_str(), kPanelFontPx, kTextSpacingPx).x;
-            DrawTextEx(font_, number.c_str(),
-                       {panel.x + panel.width - kPanelPaddingPx - numberWidth, textTop}, kPanelFontPx,
-                       kTextSpacingPx, kPanelText);
+            const float width = MeasureTextEx(font_, number.c_str(), kPanelFontPx, kTextSpacingPx).x;
+            DrawTextEx(font_, number.c_str(), {panel.x + panel.width - kPanelPaddingPx - width, textTop},
+                       kPanelFontPx, kTextSpacingPx, kPanelText);
             rowTop += kPanelRowPx;
         }
     }
