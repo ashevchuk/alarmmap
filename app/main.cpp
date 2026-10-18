@@ -100,10 +100,6 @@ constexpr float kPanelIconPx = 22;
 constexpr float kPanelFontPx = 15;
 constexpr float kPanelWidthPx = 230;
 constexpr float kTargetIconPx = 34;
-constexpr float kHaloPx = 76;
-constexpr int kHaloTextureSize = 128;
-constexpr Color kHaloColor = {255, 214, 100, 255};
-constexpr float kHaloOpacity = 0.85f;
 constexpr Vector2 kShadowOffsetPx = {3, 4};
 // A region whose alert has just started pulses for a while, fading out.
 constexpr double kPulseWindowSeconds = 180;
@@ -255,19 +251,11 @@ Vector2 toVector(const MapPoint& point) {
 }
 
 // One icon texture per target kind.
-// One icon texture per target kind and the soft halo drawn under targets.
 class TargetIcons {
 public:
     TargetIcons() {
         for (const TargetKind kind : kAllTargetKinds) icons_[kind] = std::make_unique<SnoutIcon>(kind);
-        // Fades to black rather than to transparent: halos are drawn with MAX
-        // blending, which ignores alpha.
-        Image image = GenImageGradientRadial(kHaloTextureSize, kHaloTextureSize, 0, kHaloColor, BLACK);
-        halo_ = LoadTextureFromImage(image);
-        UnloadImage(image);
-        SetTextureFilter(halo_, TEXTURE_FILTER_BILINEAR);
     }
-    ~TargetIcons() { UnloadTexture(halo_); }
     TargetIcons(const TargetIcons&) = delete;
     TargetIcons& operator=(const TargetIcons&) = delete;
 
@@ -276,26 +264,8 @@ public:
         return forKind(targetKind(target.iconName, target.detectedType));
     }
 
-    // Call between beginHalos() and endHalos().
-    void drawHalo(Vector2 center, float scale, float opacity) const {
-        const float size = kHaloPx * scale;
-        const auto level = static_cast<unsigned char>(255 * kHaloOpacity * opacity);
-        DrawTexturePro(halo_, {0, 0, kHaloTextureSize, kHaloTextureSize},
-                       {center.x - size / 2, center.y - size / 2, size, size}, {0, 0}, 0,
-                       {level, level, level, 255});
-    }
-
-    // Overlapping halos take the brighter value instead of adding up into
-    // a glaring patch around clusters of targets.
-    static void beginHalos() {
-        rlSetBlendFactors(RL_ONE, RL_ONE, RL_MAX);
-        BeginBlendMode(BLEND_CUSTOM);
-    }
-    static void endHalos() { EndBlendMode(); }
-
 private:
     std::map<TargetKind, std::unique_ptr<SnoutIcon>> icons_;
-    Texture2D halo_{};
 };
 
 struct RegionShapes {
@@ -580,13 +550,7 @@ private:
         const auto iconScale = [&](const MarkerPlacement& placement) {
             return static_cast<float>(placement.scale) * teleportIconScale(markers[placement.index].age);
         };
-        // Layer by layer, so a halo never covers a neighbouring icon.
-        TargetIcons::beginHalos();
-        for (const auto& placement : placements) {
-            icons.drawHalo(screenPosition(placement), iconScale(placement),
-                           static_cast<float>(markers[placement.index].opacity));
-        }
-        TargetIcons::endHalos();
+        // Layer by layer, so a shadow never covers a neighbouring icon.
         for (const bool shadow : {true, false}) {
             for (const auto& placement : placements) {
                 const TargetMotion::Marker& marker = markers[placement.index];
