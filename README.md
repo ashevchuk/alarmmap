@@ -65,7 +65,8 @@ show its name and path; tap elsewhere to hide them.
 
 Requirements: CMake 3.24 or newer, a C++20 compiler, libcurl 8.11 or newer
 with WebSocket support and raylib 6. nlohmann/json and earcut are fetched by
-CMake.
+CMake. The build downloads the region geometry of map.ukrainealarm.com and
+prepares it with `tools/geometry`, so the program starts without it.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -89,8 +90,8 @@ alarmmap --version
 - `--benchmark`: render frames without a frame rate cap and print the average
   frame time.
 
-Region geometry and basemap tiles are cached in `$XDG_CACHE_HOME/alarmmap`
-(by default `~/.cache/alarmmap`).
+Basemap tiles are cached in `$XDG_CACHE_HOME/alarmmap` (by default
+`~/.cache/alarmmap`).
 
 `android/build_apk.sh` builds the APK with the Android SDK and NDK; it builds
 raylib, mbedTLS and libcurl for Android itself. See the comment at its top

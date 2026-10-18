@@ -106,6 +106,15 @@ if [ ! -f "$target/sysroot/lib/libcurl.a" ]; then
     cmake --install "$target/curl-build"
 fi
 
+# Region geometry is prepared on the build machine, as for the desktop build.
+cmake -S "$root/tools/geometry" -B "$out/host-geometry" -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build "$out/host-geometry"
+if [ ! -f "$out/regions-standard-v1.geojson" ]; then
+    cmake -DOUTPUT="$out/regions-standard-v1.geojson" -P "$root/tools/geometry/download.cmake"
+fi
+"$out/host-geometry/alarmmap_geometry" "$out/regions-standard-v1.geojson" "$root/data/crimea.geojson" \
+    "$out/regions.bin"
+
 # shellcheck disable=SC2086
 cmake -S "$root" -B "$target/app-build" -G Ninja $android_cmake -DANDROID_STL=c++_static \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_FIND_ROOT_PATH="$target/sysroot" -DCMAKE_PREFIX_PATH="$target/sysroot"
@@ -114,7 +123,7 @@ cmake --build "$target/app-build" --target alarmmap
 stage="$out/apk"
 rm -rf "$stage"
 mkdir -p "$stage/assets/fonts" "$stage/res/drawable" "$stage/lib/$abi"
-cp "$root/data/cities.geojson" "$root/data/crimea.geojson" "$stage/assets/"
+cp "$root/data/cities.geojson" "$out/regions.bin" "$stage/assets/"
 cp "$font" "$stage/assets/fonts/"
 cp "$root/packaging/alarmmap.png" "$stage/res/drawable/icon.png"
 cp "$target/app-build/libalarmmap.so" "$stage/lib/$abi/"

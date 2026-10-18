@@ -5,6 +5,7 @@
 #include "map_view.hpp"
 #include "projection.hpp"
 #include "region_geometry.hpp"
+#include "region_store.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -255,6 +256,79 @@ void testLabelPoint() {
     check(threw, "region without outline throws");
 }
 
+void testPreparedRegions() {
+    const json collection = {
+        {"type", "FeatureCollection"},
+        {"features",
+         json::array({feature("7", kOblastRank,
+                              {{"type", "Polygon"},
+                               {"coordinates", json::array({squareRing(30, 48, 1), squareRing(30.25, 48.25, 0.5)})}}),
+                      feature("42", kRaionRank,
+                              {{"type", "Polygon"}, {"coordinates", json::array({squareRing(25, 46, 0.5)})}})})}};
+    const PreparedRegions original{buildRegionShapes(collection, 0.001), buildRegionShapes(collection, 0.0001)};
+    const std::string bytes = writePreparedRegions(original);
+    const PreparedRegions restored = readPreparedRegions(bytes);
+
+    const auto samePoints = [](const std::vector<MapPoint>& a, const std::vector<MapPoint>& b) {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); ++i) {
+            if (!near(a[i].x, b[i].x, 1e-4) || !near(a[i].y, b[i].y, 1e-4)) return false;
+        }
+        return true;
+    };
+    const auto sameShape = [&](const RegionShape& a, const RegionShape& b, bool withPolygons) {
+        bool same = a.id == b.id && a.name == b.name && a.rank == b.rank && a.indices == b.indices &&
+                    samePoints(a.vertices, b.vertices) && a.outlines.size() == b.outlines.size() &&
+                    samePoints({a.boundsMin, a.boundsMax}, {b.boundsMin, b.boundsMax});
+        for (size_t i = 0; same && i < a.outlines.size(); ++i) same = samePoints(a.outlines[i], b.outlines[i]);
+        if (!withPolygons) return same && b.polygons.empty();
+        same = same && a.polygons.size() == b.polygons.size();
+        for (size_t i = 0; same && i < a.polygons.size(); ++i) {
+            same = a.polygons[i].size() == b.polygons[i].size();
+            for (size_t j = 0; same && j < a.polygons[i].size(); ++j) {
+                same = samePoints(a.polygons[i][j], b.polygons[i][j]);
+            }
+        }
+        return same;
+    };
+    check(restored.coarse.size() == 2 && restored.detailed.size() == 2, "both levels come back");
+    for (size_t i = 0; i < std::min(restored.coarse.size(), original.coarse.size()); ++i) {
+        check(sameShape(original.coarse[i], restored.coarse[i], true), "coarse shape survives with its polygons");
+    }
+    for (size_t i = 0; i < std::min(restored.detailed.size(), original.detailed.size()); ++i) {
+        check(sameShape(original.detailed[i], restored.detailed[i], false),
+              "detailed shape survives without polygons");
+    }
+
+    const auto rejects = [](std::string_view data) {
+        try {
+            readPreparedRegions(data);
+        } catch (const std::runtime_error&) {
+            return true;
+        }
+        return false;
+    };
+    check(rejects(std::string_view(bytes).substr(0, bytes.size() - 1)), "truncated data is rejected");
+    check(rejects(bytes + "x"), "trailing data is rejected");
+    check(rejects("NOTGEO__" + bytes.substr(8)), "a foreign file is rejected");
+    check(rejects(""), "empty data is rejected");
+
+    // An outline longer than the bytes left after it: ring lengths count
+    // vertices, which precede them.
+    std::vector<json> ring;
+    for (int i = 0; i < 64; ++i) {
+        const double angle = 2 * std::numbers::pi * i / 64;
+        ring.push_back({30 + std::cos(angle), 48 + std::sin(angle)});
+    }
+    ring.push_back(ring.front());
+    const json round = {{"type", "FeatureCollection"},
+                        {"features", json::array({feature("9", kOblastRank,
+                                                          {{"type", "Polygon"},
+                                                           {"coordinates", json::array({json(ring)})}})})}};
+    const PreparedRegions circle{buildRegionShapes(round, 0.0001), buildRegionShapes(round, 0.0001)};
+    check(!rejects(writePreparedRegions(circle)), "a long last outline reads back");
+}
+
 void testMapView() {
     MapView view;
     view.setViewport(1600, 1000);
@@ -379,6 +453,7 @@ int main() {
         testBuildShapes();
         testOverrideRegionGeometry();
         testLabelPoint();
+        testPreparedRegions();
         testMapView();
         testCities();
         testTimestamps();

@@ -9,16 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # fuse by default, it looped forever on some region outlines.
 add_compile_options(-ffp-contract=off)
 
-include(FetchContent)
-FetchContent_Declare(nlohmann_json
-    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-# Header-only; SOURCE_SUBDIR points nowhere so its tests and demos are not built.
-FetchContent_Declare(earcut
-    GIT_REPOSITORY https://github.com/mapbox/earcut.hpp.git
-    GIT_TAG v2.2.4
-    SOURCE_SUBDIR none)
-FetchContent_MakeAvailable(nlohmann_json earcut)
+include(cmake/dependencies.cmake)
 
 # WebSocket support in libcurl is stable since 8.11.
 find_package(CURL 8.11 REQUIRED)
@@ -41,6 +32,7 @@ add_library(alarmmap_core STATIC
     src/mesh_builder.cpp
     src/projection.cpp
     src/region_geometry.cpp
+    src/region_store.cpp
     src/target_kind.cpp
     src/target_motion.cpp
     src/target_snapshot.cpp
@@ -82,6 +74,24 @@ if(ANDROID)
     return()
 endif()
 
+# The site's region geometry is downloaded at build time and prepared by
+# tools/geometry into the file the app loads; android/build_apk.sh does the
+# same for the APK.
+set(SITE_REGIONS ${CMAKE_BINARY_DIR}/regions-standard-v1.geojson)
+set(PREPARED_REGIONS ${CMAKE_BINARY_DIR}/regions.bin)
+add_subdirectory(tools/geometry)
+add_custom_command(OUTPUT ${SITE_REGIONS}
+    COMMAND ${CMAKE_COMMAND} -DOUTPUT=${SITE_REGIONS}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/geometry/download.cmake
+    COMMENT "Downloading region geometry")
+add_custom_command(OUTPUT ${PREPARED_REGIONS}
+    COMMAND alarmmap_geometry ${SITE_REGIONS} ${CMAKE_CURRENT_SOURCE_DIR}/data/crimea.geojson ${PREPARED_REGIONS}
+    DEPENDS alarmmap_geometry ${SITE_REGIONS} ${CMAKE_CURRENT_SOURCE_DIR}/data/crimea.geojson
+    COMMENT "Preparing region geometry")
+add_custom_target(prepared_regions ALL DEPENDS ${PREPARED_REGIONS})
+add_dependencies(alarmmap prepared_regions)
+target_compile_definitions(alarmmap PRIVATE ALARMMAP_PREPARED_REGIONS="${PREPARED_REGIONS}")
+
 add_executable(ws_probe tools/ws_probe.cpp)
 target_link_libraries(ws_probe PRIVATE alarmmap_core)
 target_compile_options(ws_probe PRIVATE ${WARNING_FLAGS})
@@ -97,6 +107,6 @@ endforeach()
 
 include(GNUInstallDirs)
 install(TARGETS alarmmap RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES data/cities.geojson data/crimea.geojson DESTINATION ${CMAKE_INSTALL_DATADIR}/alarmmap)
+install(FILES data/cities.geojson ${PREPARED_REGIONS} DESTINATION ${CMAKE_INSTALL_DATADIR}/alarmmap)
 install(FILES packaging/alarmmap.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES packaging/alarmmap.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps)

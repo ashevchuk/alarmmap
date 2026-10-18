@@ -14,7 +14,6 @@
 #include "heat_renderer.hpp"
 #include "app_icon.hpp"
 #include "cities.hpp"
-#include "http.hpp"
 #include "live_feed.hpp"
 #include "map_layer.hpp"
 #include "map_update.hpp"
@@ -22,6 +21,7 @@
 #include "marker_layout.hpp"
 #include "projection.hpp"
 #include "region_geometry.hpp"
+#include "region_store.hpp"
 #include "render_util.hpp"
 #include "snout_icon.hpp"
 #include "target_effects.hpp"
@@ -50,6 +50,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -67,11 +68,8 @@ using namespace alarmmap;
 
 namespace {
 
-constexpr const char* kGeometryUrl =
-    "https://map.ukrainealarm.com/data/real-map/regions-standard-v1.geojson";
-constexpr const char* kGeometryFileName = "regions-standard-v1.geojson";
-// Land outline of Crimea; the site's own outline follows the territorial sea.
-constexpr const char* kCrimeaOverrideFile = "crimea.geojson";
+// Region shapes prepared at build time by tools/geometry.
+constexpr const char* kPreparedRegionsFile = "regions.bin";
 constexpr const char* kCitiesFile = "cities.geojson";
 constexpr const char* kTileJsonUrl = "https://tiles.openfreemap.org/planet";
 constexpr const char* kTargetsChannel = "mapTargets_heat_legacy_v2";
@@ -81,11 +79,6 @@ constexpr const char* kAlertsChannel = "updateMap";
 constexpr const char* kAlertsSnapshotUrl = "https://map.ukrainealarm.com/api/v2/data/mapUpdate";
 constexpr auto kScreenshotDataTimeout = std::chrono::seconds(30);
 constexpr auto kScreenshotPollInterval = std::chrono::milliseconds(100);
-// About 240 m on the ground: under one pixel even with the country on a 4K
-// screen. Zoomed in, the detailed shapes take over; the source data itself
-// has a resolution of roughly 0.01 map units, so finer would change nothing.
-constexpr double kSimplifyTolerance = 0.05;
-constexpr double kDetailedTolerance = 0.002;
 
 // Animations here are slow (20 s glides, multi-second fades); 30 frames per
 // second look the same as 60 at half the cost. Panning and zooming get 60
@@ -237,7 +230,7 @@ double nowSeconds() {
 // Files the APK carries. Android exposes assets only through AAssetManager,
 // so they are copied into internal storage, where the regular file code
 // reads them as data and cache.
-constexpr const char* kBundledAssets[] = {"cities.geojson", "crimea.geojson", "fonts/NotoSans-Medium.ttf"};
+constexpr const char* kBundledAssets[] = {"cities.geojson", "fonts/NotoSans-Medium.ttf"};
 
 fs::path androidStorage() { return GetAndroidApp()->activity->internalDataPath; }
 
@@ -311,22 +304,31 @@ fs::path dataDirectory() {
 }
 #endif
 
-fs::path ensureGeometryFile() {
-    const fs::path path = cacheDirectory() / kGeometryFileName;
-    if (fs::exists(path)) return path;
-
-    std::cout << "downloading " << kGeometryUrl << '\n';
-    const std::string body = httpGet(kGeometryUrl);
-    fs::create_directories(path.parent_path());
-    const fs::path partial = path.string() + ".partial";
-    {
-        std::ofstream output(partial, std::ios::binary);
-        output << body;
-        if (!output) throw std::runtime_error("cannot write " + partial.string());
-    }
-    fs::rename(partial, path);
-    return path;
+#ifdef __ANDROID__
+// Read straight from the APK: copying it to storage first would only add a
+// write of several megabytes to every start.
+std::string preparedRegionsBytes() {
+    AAsset* asset = AAssetManager_open(GetAndroidApp()->activity->assetManager, kPreparedRegionsFile,
+                                       AASSET_MODE_BUFFER);
+    if (!asset) throw std::runtime_error(std::string("missing asset ") + kPreparedRegionsFile);
+    const auto* data = static_cast<const char*>(AAsset_getBuffer(asset));
+    std::string bytes;
+    if (data) bytes.assign(data, static_cast<size_t>(AAsset_getLength64(asset)));
+    AAsset_close(asset);
+    if (!data) throw std::runtime_error(std::string("cannot read asset ") + kPreparedRegionsFile);
+    return bytes;
 }
+#else
+// An install keeps the file with the other data; a build tree has it in the
+// build directory.
+std::string preparedRegionsBytes() {
+    fs::path path = dataDirectory() / kPreparedRegionsFile;
+    if (!fs::exists(path)) path = ALARMMAP_PREPARED_REGIONS;
+    std::ifstream input(path, std::ios::binary);
+    if (!input) throw std::runtime_error("cannot open " + path.string());
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+#endif
 
 json readJsonFile(const fs::path& path) {
     std::ifstream input(path);
@@ -363,11 +365,8 @@ struct RegionShapes {
 };
 
 RegionShapes loadShapes() {
-    const fs::path geometryPath = ensureGeometryFile();
-    json regions = readJsonFile(geometryPath);
-    overrideRegionGeometry(regions, readJsonFile(dataDirectory() / kCrimeaOverrideFile));
-    RegionShapes shapes{buildRegionShapes(regions, kSimplifyTolerance),
-                        buildRegionShapes(regions, kDetailedTolerance),
+    PreparedRegions regions = readPreparedRegions(preparedRegionsBytes());
+    RegionShapes shapes{std::move(regions.coarse), std::move(regions.detailed),
                         loadCities(readJsonFile(dataDirectory() / kCitiesFile))};
     const auto triangles = [](const std::vector<RegionShape>& level) {
         size_t count = 0;
@@ -387,7 +386,7 @@ public:
         : shapes_(std::move(shapes)),
           font_(font),
           tiles_({kTileJsonUrl, tileCache, {}}),
-          mapLayer_(shapes_.coarse, kSimplifyTolerance, shapes_.detailed, shapes_.cities, tiles_, font_),
+          mapLayer_(shapes_.coarse, kCoarseTolerance, shapes_.detailed, shapes_.cities, tiles_, font_),
           airFilter_(shapes_.coarse) {}
     Scene(const Scene&) = delete;
     Scene& operator=(const Scene&) = delete;
