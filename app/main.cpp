@@ -686,9 +686,12 @@ private:
         }
         for (const auto& placement : placements) {
             if (placement.count > 1) {
+                // The badge text keeps the UI size however small the marker is;
+                // only its place beside the icon follows the marker's size.
                 const Vector2 center = screenPosition(placement);
-                drawScaledAround(center, markerScale_, [&] {
-                    drawCountBadge(center, static_cast<float>(placement.scale), placement.count,
+                const float iconScale = static_cast<float>(placement.scale) * markerScale_ / uiScale();
+                drawScaledAround(center, uiScale(), [&] {
+                    drawCountBadge(center, iconScale, placement.count,
                                    static_cast<float>(markers[placement.index].opacity));
                 });
             }
