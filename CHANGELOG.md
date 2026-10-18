@@ -9,11 +9,16 @@ project follows [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - The Android app runs on Android 7.0 and newer instead of 8.0.
+- Region geometry comes with the program, prepared at build time, instead of
+  being downloaded and triangulated on the first start: the map appears
+  without a network connection and starts faster.
 
 ### Fixed
 
 - The Android app no longer hangs on start on some phones while it
   triangulates region outlines.
+- The Android app no longer closes without a word when started offline, nor
+  shows an empty window when opened again after that.
 
 ## [0.2.0] - 2026-10-18
 

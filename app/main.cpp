@@ -1205,5 +1205,10 @@ int main(int argc, char** argv) {
         std::cerr << "alarmmap: " << error.what() << '\n';
     }
     curl_global_cleanup();
+#ifdef __ANDROID__
+    // Android keeps a finished app's process and would start the next launch
+    // in it, with this code's and raylib's state left from the last run.
+    std::exit(exitCode);
+#endif
     return exitCode;
 }
