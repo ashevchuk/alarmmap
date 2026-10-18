@@ -74,16 +74,11 @@ if(ANDROID)
     return()
 endif()
 
-# The site's region geometry is downloaded at build time and prepared by
-# tools/geometry into the file the app loads; android/build_apk.sh does the
-# same for the APK.
-set(SITE_REGIONS ${CMAKE_BINARY_DIR}/regions-standard-v1.geojson)
+# tools/geometry prepares the site's region geometry, kept in data/, into the
+# file the app loads; android/build_apk.sh does the same for the APK.
+set(SITE_REGIONS ${CMAKE_CURRENT_SOURCE_DIR}/data/regions-standard-v1.geojson)
 set(PREPARED_REGIONS ${CMAKE_BINARY_DIR}/regions.bin)
 add_subdirectory(tools/geometry)
-add_custom_command(OUTPUT ${SITE_REGIONS}
-    COMMAND ${CMAKE_COMMAND} -DOUTPUT=${SITE_REGIONS}
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/geometry/download.cmake
-    COMMENT "Downloading region geometry")
 add_custom_command(OUTPUT ${PREPARED_REGIONS}
     COMMAND alarmmap_geometry ${SITE_REGIONS} ${CMAKE_CURRENT_SOURCE_DIR}/data/crimea.geojson ${PREPARED_REGIONS}
     DEPENDS alarmmap_geometry ${SITE_REGIONS} ${CMAKE_CURRENT_SOURCE_DIR}/data/crimea.geojson

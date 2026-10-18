@@ -1,5 +1,5 @@
-# Downloads the site's region GeoJSON:
-#   cmake -DOUTPUT=... -P download.cmake
+# Downloads the site's region GeoJSON, to refresh the copy in data/:
+#   cmake -DOUTPUT=data/regions-standard-v1.geojson -P tools/geometry/download.cmake
 # The site turns away requests that do not look like a browser.
 set(URL "https://map.ukrainealarm.com/data/real-map/regions-standard-v1.geojson")
 file(DOWNLOAD "${URL}" "${OUTPUT}.partial" STATUS status TLS_VERIFY ON

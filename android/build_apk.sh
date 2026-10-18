@@ -109,10 +109,7 @@ fi
 # Region geometry is prepared on the build machine, as for the desktop build.
 cmake -S "$root/tools/geometry" -B "$out/host-geometry" -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build "$out/host-geometry"
-if [ ! -f "$out/regions-standard-v1.geojson" ]; then
-    cmake -DOUTPUT="$out/regions-standard-v1.geojson" -P "$root/tools/geometry/download.cmake"
-fi
-"$out/host-geometry/alarmmap_geometry" "$out/regions-standard-v1.geojson" "$root/data/crimea.geojson" \
+"$out/host-geometry/alarmmap_geometry" "$root/data/regions-standard-v1.geojson" "$root/data/crimea.geojson" \
     "$out/regions.bin"
 
 # shellcheck disable=SC2086

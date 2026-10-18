@@ -65,8 +65,13 @@ show its name and path; tap elsewhere to hide them.
 
 Requirements: CMake 3.24 or newer, a C++20 compiler, libcurl 8.11 or newer
 with WebSocket support and raylib 6. nlohmann/json and earcut are fetched by
-CMake. The build downloads the region geometry of map.ukrainealarm.com and
-prepares it with `tools/geometry`, so the program starts without it.
+CMake. The build prepares the region geometry of map.ukrainealarm.com, kept
+in `data/regions-standard-v1.geojson`, with `tools/geometry`, so the program
+starts without downloading it. To refresh that copy:
+
+```sh
+cmake -DOUTPUT=data/regions-standard-v1.geojson -P tools/geometry/download.cmake
+```
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -99,7 +104,8 @@ for what it needs and how to sign with your own key.
 
 ## Data and credits
 
-- Alerts and targets: [map.ukrainealarm.com](https://map.ukrainealarm.com).
+- Alerts, targets and region geometry:
+  [map.ukrainealarm.com](https://map.ukrainealarm.com).
 - Basemap: [OpenFreeMap](https://openfreemap.org), © OpenMapTiles,
   © OpenStreetMap contributors.
 - Place names: [GeoNames](https://www.geonames.org), CC BY 4.0.
