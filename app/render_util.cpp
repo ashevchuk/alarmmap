@@ -39,6 +39,14 @@ Shader loadFragmentShader(const char* source, const char* name) {
     return shader;
 }
 
+Shader loadShader(const char* vertexSource, const char* fragmentSource, const char* name) {
+    const Shader shader = LoadShaderFromMemory(targetGlsl(vertexSource).c_str(), targetGlsl(fragmentSource).c_str());
+    if (shader.id == rlGetShaderIdDefault()) {
+        throw std::runtime_error(std::string("cannot compile ") + name + " shader");
+    }
+    return shader;
+}
+
 RenderTexture2D loadLinearTarget(int width, int height) {
     const RenderTexture2D target = LoadRenderTexture(width, height);
     if (!IsRenderTextureValid(target)) throw std::runtime_error("cannot create render target");

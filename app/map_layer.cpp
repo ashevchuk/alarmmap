@@ -79,6 +79,10 @@ constexpr double kMaxStaleSeconds = 0.5;
 // Newly arrived basemap tiles are drawn in batches at most this often.
 constexpr double kTileRedrawSeconds = 0.3;
 constexpr int kMaxTileZoom = 14;
+// Uploaded tile geometry kept beyond the tiles on screen, and how many cache
+// renders an unused tile's geometry survives once that many are kept.
+constexpr size_t kMaxTileGeometries = 256;
+constexpr std::uint64_t kTileGeometryKeepRenders = 8;
 // How far up the tile pyramid to look for a stand-in for a missing tile.
 constexpr int kAncestorLevels = 4;
 constexpr float kOblastBorderPx = 1.5f;
@@ -90,8 +94,6 @@ constexpr double kHromadaBordersMinZoom = 4;
 constexpr double kMaxSimplificationPx = 0.6;
 constexpr float kCountryHaloRadiusPx = 26;
 constexpr float kAlertGlowRadiusPx = 10;
-// Triangles per rlBegin/rlEnd block; keeps every block inside one render batch.
-constexpr int kTrianglesPerBlock = 1024;
 constexpr float kLabelFontPx = 13;
 constexpr float kLabelSpacingPx = 0.4f;
 // A dark outline around every glyph keeps labels readable over roads,
@@ -165,24 +167,6 @@ Vector2 toVector(const MapPoint& point) {
     return {static_cast<float>(point.x), static_cast<float>(point.y)};
 }
 
-void drawTriangles(const std::vector<MapPoint>& vertices, const std::vector<std::uint32_t>& indices,
-                   Color color) {
-    const size_t triangleCount = indices.size() / 3;
-    for (size_t first = 0; first < triangleCount; first += kTrianglesPerBlock) {
-        const size_t last = std::min(triangleCount, first + kTrianglesPerBlock);
-        rlCheckRenderBatchLimit(static_cast<int>((last - first) * 3));
-        rlBegin(RL_TRIANGLES);
-        rlColor4ub(color.r, color.g, color.b, color.a);
-        for (size_t index = first * 3; index < last * 3; ++index) {
-            const MapPoint& vertex = vertices[indices[index]];
-            rlVertex2f(static_cast<float>(vertex.x), static_cast<float>(vertex.y));
-        }
-        rlEnd();
-    }
-}
-
-void drawFill(const RegionShape& shape, Color color) { drawTriangles(shape.vertices, shape.indices, color); }
-
 // Web map zoom of the view in density-independent pixels, as web maps
 // count it: a dense phone screen gets the detail a desktop shows at the same
 // physical size, not three times more.
@@ -230,22 +214,21 @@ Camera2D viewCamera(const alarmmap::MapView& view) {
     return viewCamera(view, static_cast<float>(view.width()), static_cast<float>(view.height()));
 }
 
-std::vector<MapLayer::DrawableRegion> MapLayer::makeDrawable(const std::vector<RegionShape>& shapes) {
-    std::vector<DrawableRegion> regions;
+MapLayer::RegionLevel MapLayer::makeLevel(const std::vector<RegionShape>& shapes) {
+    alarmmap::MeshBuilder fills;
+    std::array<alarmmap::MeshBuilder, kHromadaRank + 1> borders;
     for (const RegionShape& shape : shapes) {
-        DrawableRegion region{&shape, {}};
-        for (const auto& ring : shape.outlines) {
-            auto& points = region.closedOutlines.emplace_back();
-            for (const MapPoint& point : ring) points.push_back(toVector(point));
-            points.push_back(points.front());
-        }
-        regions.push_back(std::move(region));
+        fills.beginItem();
+        fills.addTriangles(shape.vertices, shape.indices);
+        if (shape.rank < kOblastRank || shape.rank > kHromadaRank) continue;
+        for (const auto& ring : shape.outlines) borders[shape.rank].addPolyline(ring, true);
     }
-    return regions;
+    RegionLevel level{&shapes, GpuGeometry(fills), {}};
+    for (int rank = kOblastRank; rank <= kHromadaRank; ++rank) level.borders[rank] = GpuGeometry(borders[rank]);
+    return level;
 }
 
-bool MapLayer::Selection::covers(const DrawableRegion& region) const {
-    const RegionShape& shape = *region.shape;
+bool MapLayer::Selection::covers(const RegionShape& shape) const {
     return shape.boundsMax.x >= min.x && shape.boundsMin.x <= max.x && shape.boundsMax.y >= min.y &&
            shape.boundsMin.y <= max.y;
 }
@@ -253,8 +236,8 @@ bool MapLayer::Selection::covers(const DrawableRegion& region) const {
 MapLayer::MapLayer(const std::vector<RegionShape>& coarse, double coarseTolerance,
                    const std::vector<RegionShape>& detailed, const std::vector<alarmmap::City>& cities,
                    alarmmap::TileStore& tiles, const Font& font)
-    : coarse_(makeDrawable(coarse)),
-      detailed_(makeDrawable(detailed)),
+    : coarse_(makeLevel(coarse)),
+      detailed_(makeLevel(detailed)),
       coarseTolerance_(coarseTolerance),
       cities_(cities),
       tiles_(tiles),
@@ -326,15 +309,19 @@ void MapLayer::resize(int width, int height) {
 }
 
 void MapLayer::drawFills(const Selection& selection, bool alertsOnly, Color color) const {
+    const std::vector<RegionShape>& shapes = *selection.level->shapes;
+    geometry_.begin(color);
     // Coarser regions first, so a district alert stays visible over its oblast.
     for (int rank = kOblastRank; rank <= kHromadaRank; ++rank) {
-        for (const DrawableRegion& region : *selection.regions) {
-            if (region.shape->rank != rank || !selection.covers(region)) continue;
-            if (alertsOnly ? alertRegionIds_.contains(region.shape->id) : rank == kOblastRank) {
-                drawFill(*region.shape, color);
+        for (size_t i = 0; i < shapes.size(); ++i) {
+            const RegionShape& shape = shapes[i];
+            if (shape.rank != rank || !selection.covers(shape)) continue;
+            if (alertsOnly ? alertRegionIds_.contains(shape.id) : rank == kOblastRank) {
+                geometry_.draw(selection.level->fills, i);
             }
         }
     }
+    geometry_.end();
 }
 
 void MapLayer::renderMask(const GlowMasks& masks, const Selection& selection, const Camera2D& camera,
@@ -359,13 +346,9 @@ void MapLayer::renderMask(const GlowMasks& masks, const Selection& selection, co
 
 void MapLayer::drawBorders(const Selection& selection, const Camera2D& camera, float scale) const {
     const auto drawRank = [&](int rank, float widthPx, Color color) {
-        for (const DrawableRegion& region : *selection.regions) {
-            if (region.shape->rank != rank || !selection.covers(region)) continue;
-            for (const auto& outline : region.closedOutlines) {
-                DrawSplineLinear(outline.data(), static_cast<int>(outline.size()),
-                                 widthPx * scale / camera.zoom, color);
-            }
-        }
+        geometry_.begin(color, widthPx * scale / camera.zoom);
+        geometry_.drawAll(selection.level->borders[rank]);
+        geometry_.end();
     };
     if (selection.showHromadaBorders) drawRank(kHromadaRank, kHromadaBorderPx, kHromadaBorder);
     drawRank(kRaionRank, kRaionBorderPx, kRaionBorder);
@@ -561,28 +544,49 @@ std::vector<std::shared_ptr<const alarmmap::BasemapTile>> MapLayer::tilesToDraw(
     return result;
 }
 
+const MapLayer::TileGeometry& MapLayer::tileGeometry(const alarmmap::BasemapTile& tile) {
+    const auto found = tileGeometry_.find(tile.id);
+    if (found != tileGeometry_.end()) {
+        found->second.lastUsed = renderCount_;
+        return found->second;
+    }
+    alarmmap::MeshBuilder fills;
+    for (const alarmmap::FillMesh& mesh : tile.fills) {
+        fills.beginItem();
+        fills.addTriangles(mesh.vertices, mesh.indices);
+    }
+    alarmmap::MeshBuilder lines;
+    for (const auto& polylines : tile.lines) {
+        lines.beginItem();
+        for (const auto& polyline : polylines) lines.addPolyline(polyline, false);
+    }
+    return tileGeometry_.emplace(tile.id, TileGeometry{GpuGeometry(fills), GpuGeometry(lines), renderCount_})
+        .first->second;
+}
+
 void MapLayer::drawBasemap(const std::vector<std::shared_ptr<const alarmmap::BasemapTile>>& tiles,
-                           const Camera2D& camera, float scale, double viewZoom) const {
+                           const Camera2D& camera, float scale, double viewZoom) {
+    ++renderCount_;
+    std::vector<const TileGeometry*> geometry;
+    for (const auto& tile : tiles) geometry.push_back(&tileGeometry(*tile));
     for (size_t fill = 0; fill < std::size(kFillColors); ++fill) {
-        for (const auto& tile : tiles) {
-            const alarmmap::FillMesh& mesh = tile->fills[fill];
-            drawTriangles(mesh.vertices, mesh.indices, kFillColors[fill]);
-        }
+        geometry_.begin(kFillColors[fill]);
+        for (const TileGeometry* tile : geometry) geometry_.draw(tile->fills, fill);
+        geometry_.end();
     }
     // Lines widen a little as the view zooms in.
     const float widthScale = static_cast<float>(std::clamp(1 + 0.25 * std::log2(viewZoom), 1.0, 2.2));
-    std::vector<Vector2> points;
     for (size_t line = 0; line < std::size(kLineStyles); ++line) {
         const LineStyle& style = kLineStyles[line];
-        for (const auto& tile : tiles) {
-            if (tile->id.z < style.minZoom) continue;
-            for (const auto& polyline : tile->lines[line]) {
-                points.clear();
-                for (const MapPoint& point : polyline) points.push_back(toVector(point));
-                DrawSplineLinear(points.data(), static_cast<int>(points.size()),
-                                 style.widthPx * widthScale * scale / camera.zoom, style.color);
-            }
+        geometry_.begin(style.color, style.widthPx * widthScale * scale / camera.zoom);
+        for (size_t i = 0; i < tiles.size(); ++i) {
+            if (tiles[i]->id.z >= style.minZoom) geometry_.draw(geometry[i]->lines, line);
         }
+        geometry_.end();
+    }
+    // Geometry of tiles not drawn lately goes once there is a lot of it.
+    for (auto it = tileGeometry_.begin(); it != tileGeometry_.end() && tileGeometry_.size() > kMaxTileGeometries;) {
+        it = renderCount_ - it->second.lastUsed > kTileGeometryKeepRenders ? tileGeometry_.erase(it) : std::next(it);
     }
 }
 
@@ -604,12 +608,16 @@ void MapLayer::drawHighlights(const std::map<std::string, float>& opacityByRegio
                               const alarmmap::MapView& view) const {
     if (opacityByRegion.empty()) return;
     const Selection selection = select(view, view.width() / 2, view.height() / 2);
+    const std::vector<RegionShape>& shapes = *selection.level->shapes;
     BeginMode2D(viewCamera(view));
     for (int rank = kOblastRank; rank <= kHromadaRank; ++rank) {
-        for (const DrawableRegion& region : *selection.regions) {
-            if (region.shape->rank != rank || !selection.covers(region)) continue;
-            const auto opacity = opacityByRegion.find(region.shape->id);
-            if (opacity != opacityByRegion.end()) drawFill(*region.shape, Fade(kHighlight, opacity->second));
+        for (size_t i = 0; i < shapes.size(); ++i) {
+            if (shapes[i].rank != rank || !selection.covers(shapes[i])) continue;
+            const auto opacity = opacityByRegion.find(shapes[i].id);
+            if (opacity == opacityByRegion.end()) continue;
+            geometry_.begin(Fade(kHighlight, opacity->second));
+            geometry_.draw(selection.level->fills, i);
+            geometry_.end();
         }
     }
     EndMode2D();

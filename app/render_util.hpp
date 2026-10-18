@@ -6,6 +6,9 @@
 // Compiles a fragment shader over raylib's default vertex shader; throws
 // std::runtime_error when compilation fails.
 Shader loadFragmentShader(const char* source, const char* name);
+// Compiles a vertex and fragment shader pair; throws std::runtime_error when
+// compilation fails.
+Shader loadShader(const char* vertexSource, const char* fragmentSource, const char* name);
 
 // Render target with bilinear filtering and clamped edges, as blurs need.
 RenderTexture2D loadLinearTarget(int width, int height);

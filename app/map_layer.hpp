@@ -2,12 +2,15 @@
 
 #include "cities.hpp"
 #include "gaussian_blur.hpp"
+#include "gpu_geometry.hpp"
 #include "map_view.hpp"
 #include "tile_store.hpp"
 #include "region_geometry.hpp"
 
 #include <raylib.h>
 
+#include <array>
+#include <cstdint>
 #include <map>
 #include <set>
 #include <string>
@@ -54,20 +57,31 @@ public:
     void drawVignette(float width, float height) const;
 
 private:
-    struct DrawableRegion {
-        const alarmmap::RegionShape* shape;
-        // Outlines with the first point repeated at the end.
-        std::vector<std::vector<Vector2>> closedOutlines;
+    // One detail level of the regions, with its geometry on the GPU.
+    struct RegionLevel {
+        const std::vector<alarmmap::RegionShape>* shapes;
+        // One item per shape, in the same order.
+        GpuGeometry fills;
+        // All outlines of each rank, indexed by rank.
+        std::array<GpuGeometry, alarmmap::kHromadaRank + 1> borders;
     };
 
     // Regions of one detail level that intersect an area of the map.
     struct Selection {
-        const std::vector<DrawableRegion>* regions;
+        const RegionLevel* level;
         alarmmap::MapPoint min;
         alarmmap::MapPoint max;
         bool showHromadaBorders;
 
-        bool covers(const DrawableRegion& region) const;
+        bool covers(const alarmmap::RegionShape& shape) const;
+    };
+
+    // Basemap geometry of one tile: fills with one item per fill class,
+    // lines with one item per line class.
+    struct TileGeometry {
+        GpuGeometry fills;
+        GpuGeometry lines;
+        std::uint64_t lastUsed = 0;
     };
 
     struct Label {
@@ -83,7 +97,8 @@ private:
 
     void resize(int width, int height);
     void render(const alarmmap::MapView& view);
-    static std::vector<DrawableRegion> makeDrawable(const std::vector<alarmmap::RegionShape>& shapes);
+    static RegionLevel makeLevel(const std::vector<alarmmap::RegionShape>& shapes);
+    const TileGeometry& tileGeometry(const alarmmap::BasemapTile& tile);
     // Regions to draw for `view` within the given distances from its centre.
     Selection select(const alarmmap::MapView& view, double halfWidthPx, double halfHeightPx) const;
     void renderMask(const GlowMasks& masks, const Selection& selection, const Camera2D& camera,
@@ -98,16 +113,20 @@ private:
     // the nearest loaded ancestor of a missing one; lower zooms first.
     std::vector<std::shared_ptr<const alarmmap::BasemapTile>> tilesToDraw() const;
     void drawBasemap(const std::vector<std::shared_ptr<const alarmmap::BasemapTile>>& tiles,
-                     const Camera2D& camera, float scale, double viewZoom) const;
+                     const Camera2D& camera, float scale, double viewZoom);
     void drawOutsideDimming() const;
 
-    std::vector<DrawableRegion> coarse_;
-    std::vector<DrawableRegion> detailed_;
+    GeometryRenderer geometry_;
+    RegionLevel coarse_;
+    RegionLevel detailed_;
     double coarseTolerance_;
     const std::vector<alarmmap::City>& cities_;
     alarmmap::TileStore& tiles_;
     std::vector<alarmmap::TileId> wantedTiles_;
     std::uint64_t renderedTilesVersion_ = 0;
+    std::map<alarmmap::TileId, TileGeometry> tileGeometry_;
+    // Counts cache renders; tile geometry unused for a while is released.
+    std::uint64_t renderCount_ = 0;
     Shader dimShader_{};
     const Font& font_;
     std::vector<Label> labels_;

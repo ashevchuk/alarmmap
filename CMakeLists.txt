@@ -33,6 +33,7 @@ add_library(alarmmap_core STATIC
     src/map_update.cpp
     src/map_view.cpp
     src/marker_layout.cpp
+    src/mesh_builder.cpp
     src/projection.cpp
     src/region_geometry.cpp
     src/target_kind.cpp
@@ -49,6 +50,7 @@ set(APP_SOURCES
     app/main.cpp
     app/app_icon.cpp
     app/gaussian_blur.cpp
+    app/gpu_geometry.cpp
     app/heat_renderer.cpp
     app/map_layer.cpp
     app/render_util.cpp
@@ -80,7 +82,7 @@ target_link_libraries(ws_probe PRIVATE alarmmap_core)
 target_compile_options(ws_probe PRIVATE ${WARNING_FLAGS})
 
 enable_testing()
-foreach(test_name target_snapshot geometry heat basemap)
+foreach(test_name target_snapshot geometry heat basemap mesh)
     add_executable(${test_name}_test tests/${test_name}_test.cpp)
     target_link_libraries(${test_name}_test PRIVATE alarmmap_core)
     target_compile_options(${test_name}_test PRIVATE ${WARNING_FLAGS})
