@@ -6,6 +6,17 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Experimental Android app: `android/build_apk.sh` builds an arm64 APK with
+  live data, touch panning, pinch zoom and tapping targets for their name and
+  path.
+
+### Changed
+
+- The map redraws several times faster after panning and zooming: region and
+  basemap geometry stays on the GPU instead of being sent again each time.
+
 ## [0.1.2] - 2026-10-18
 
 ### Changed
