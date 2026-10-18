@@ -13,7 +13,8 @@ out="$root/build-android"
 sdk="${ANDROID_HOME:-$HOME/Android/Sdk}"
 ndk="$(find "$sdk/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
 build_tools="$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-platform="$(find "$sdk/platforms" -mindepth 1 -maxdepth 1 -name 'android-[0-9]*' | sort -V | tail -n 1)"
+# A stable API level: the newest platform in an SDK can be a preview.
+platform="$sdk/platforms/android-36"
 font="$(find /usr/share/fonts -name NotoSans-Medium.ttf | head -n 1)"
 min_sdk=26
 abi=arm64-v8a
