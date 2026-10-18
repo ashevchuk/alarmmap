@@ -137,7 +137,12 @@ constexpr Color kPanelBorder = {70, 80, 96, 160};
 constexpr Color kPanelText = {205, 212, 224, 255};
 constexpr Color kScreenClear = BLACK;
 constexpr Color kCreditsColor = {120, 128, 142, 200};
+#ifdef __ANDROID__
+// A phone has no room to spare; the credits only need to be there.
+constexpr float kCreditsFontPx = 6;
+#else
 constexpr float kCreditsFontPx = 12;
+#endif
 // GeoNames data is CC BY 4.0, which requires naming the source.
 constexpr const char* kCreditsText =
     "Дані: map.ukrainealarm.com · OpenFreeMap © OpenMapTiles © OpenStreetMap · GeoNames (CC BY 4.0) · Natural Earth";
@@ -561,9 +566,13 @@ private:
         const Vector2 extent = MeasureTextEx(font_, line.text.c_str(), kStatusFontPx, kTextSpacingPx);
         DrawCircleV({kStatusMarginPx + kStatusDotRadiusPx, kStatusMarginPx + extent.y / 2},
                     kStatusDotRadiusPx, line.dot);
+#ifndef __ANDROID__
+        // On a phone the dot alone tells the connection state; the text would
+        // cover the map.
         DrawTextEx(font_, line.text.c_str(),
                    {kStatusMarginPx + 3 * kStatusDotRadiusPx, kStatusMarginPx}, kStatusFontPx,
                    kTextSpacingPx, kStatusColor);
+#endif
     }
 
     void drawSummary(const std::vector<TargetMotion::Marker>& markers, const TargetIcons& icons,
