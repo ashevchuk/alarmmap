@@ -851,6 +851,45 @@ private:
     std::thread thread_;
 };
 
+// The live feed and the thread running it, started and stopped together.
+struct LiveConnection {
+    explicit LiveConnection(LiveState& state)
+        : feed({{kTargetsChannel, kTargetsSnapshotUrl}, {kAlertsChannel, kAlertsSnapshotUrl}},
+               [&state](const std::string& channel, const json& payload) { state.onPublication(channel, payload); },
+               [&state](const std::string& event, const json& details) { state.onEvent(event, details); }),
+          thread(feed) {}
+
+    LiveFeed feed;
+    FeedThread thread;  // after `feed`, so it stops before the feed goes away
+};
+
+#ifdef __ANDROID__
+// Android reports the app's lifecycle through raylib's command callback.
+// This hook runs ahead of it and stops the live feed once the app goes to
+// the background, where the window is not drawn and the connection would
+// only drain the battery. Both run on the main loop's thread.
+struct BackgroundWatch {
+    LiveFeed* feed = nullptr;
+    bool feedStopped = false;
+    void (*forward)(android_app*, int32_t) = nullptr;
+};
+BackgroundWatch backgroundWatch;
+
+void onAppCommand(android_app* app, int32_t command) {
+    if (command == APP_CMD_STOP && backgroundWatch.feed) {
+        backgroundWatch.feed->stop();
+        backgroundWatch.feedStopped = true;
+    }
+    backgroundWatch.forward(app, command);
+}
+
+void watchAppLifecycle() {
+    android_app* app = GetAndroidApp();
+    backgroundWatch.forward = app->onAppCmd;
+    app->onAppCmd = onAppCommand;
+}
+#endif
+
 StatusLine describeLiveStatus(const LiveData& data, double now) {
     StatusLine line;
     switch (data.connection) {
@@ -1020,15 +1059,8 @@ int run(const Options& options) {
     if (options.alerts) fileAlerts = activeRegionAlerts(readJsonFile(*options.alerts));
 
     LiveState state;
-    LiveFeed feed({{kTargetsChannel, kTargetsSnapshotUrl}, {kAlertsChannel, kAlertsSnapshotUrl}},
-                  [&state](const std::string& channel, const json& payload) {
-                      state.onPublication(channel, payload);
-                  },
-                  [&state](const std::string& event, const json& details) {
-                      state.onEvent(event, details);
-                  });
-    std::optional<FeedThread> feedThread;
-    if (isLive(options)) feedThread.emplace(feed);
+    std::unique_ptr<LiveConnection> connection;
+    if (isLive(options)) connection = std::make_unique<LiveConnection>(state);
 
     // No FLAG_MSAA_4X_HINT: on the NVIDIA driver, interactive resizing of a
     // multisampled window triggers Xid 69 GPU errors that stall the compositor.
@@ -1043,6 +1075,11 @@ int run(const Options& options) {
     InitWindow(kInitialWidth, kInitialHeight, "alarmmap");
 #endif
     if (!IsWindowReady()) throw std::runtime_error("cannot open window");
+#ifdef __ANDROID__
+    // raylib installs its command callback while opening the window.
+    watchAppLifecycle();
+    if (connection) backgroundWatch.feed = &connection->feed;
+#endif
     SetWindowMinSize(kMinimumWidth, kMinimumHeight);
     // Triangulated polygons and mirrored icon parts come in both windings.
     rlDisableBackfaceCulling();
@@ -1109,6 +1146,17 @@ int run(const Options& options) {
                 focus.pointer = hovering ? std::optional(GetMousePosition()) : std::nullopt;
 #endif
                 if (!(view == before)) lastInteraction = now;
+#ifdef __ANDROID__
+                if (backgroundWatch.feedStopped) {
+                    // Back from the background: a new connection fetches the
+                    // current state.
+                    backgroundWatch.feed = nullptr;
+                    connection.reset();
+                    connection = std::make_unique<LiveConnection>(state);
+                    backgroundWatch.feed = &connection->feed;
+                    backgroundWatch.feedStopped = false;
+                }
+#endif
                 if (isLive(options)) {
                     if (state.copyIfNewer(liveVersion, liveData)) {
                         scene.apply(liveData.targets, liveData.alerts, now);
