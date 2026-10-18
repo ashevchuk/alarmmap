@@ -9,9 +9,9 @@
 
 namespace {
 
-// Opacity curve of the site's satellite heat layer with a yellow palette and
-// higher opacity, so the glow stands out over dark red alert regions. Output
-// is premultiplied by alpha.
+// Opacity curve of the site's satellite heat layer with a yellow palette, so
+// the glow stands out over dark red alert regions. Output is premultiplied by
+// alpha.
 constexpr const char* kCompositeShader = R"(#version 330
 in vec2 fragTexCoord;
 uniform sampler2D texture0;
@@ -31,7 +31,7 @@ void main() {
     float density = clamp(texture(texture0, fragTexCoord).a, 0.0, 1.0);
     if (density < 0.002) discard;
     float intensity = min(1.0, density * 1.9);
-    float alpha = 0.75 * pow(intensity, 0.65) * min(1.0, intensity / 0.2);
+    float alpha = 0.5 * pow(intensity, 0.65) * min(1.0, intensity / 0.2);
     finalColor = vec4(palette(density) * alpha, alpha);
 }
 )";
