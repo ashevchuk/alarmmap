@@ -810,7 +810,9 @@ int run(const Options& options) {
     std::optional<FeedThread> feedThread;
     if (isLive(options)) feedThread.emplace(feed);
 
-    unsigned flags = FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE;
+    // No FLAG_MSAA_4X_HINT: on the NVIDIA driver, interactive resizing of a
+    // multisampled window triggers Xid 69 GPU errors that stall the compositor.
+    unsigned flags = FLAG_WINDOW_RESIZABLE;
     if (options.screenshot) flags |= FLAG_WINDOW_HIDDEN;
     SetConfigFlags(flags);
     SetTraceLogLevel(LOG_WARNING);
