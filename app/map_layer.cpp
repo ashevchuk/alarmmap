@@ -76,6 +76,9 @@ constexpr float kCacheMarginShare = 0.25f;
 // often while it keeps moving.
 constexpr double kSettleSeconds = 0.12;
 constexpr double kMaxStaleSeconds = 0.5;
+// During a gesture the cache is stretched up to this factor either way
+// before it is re-rendered; beyond it the map turns visibly blurry.
+constexpr double kMaxCacheMagnification = 2;
 // Newly arrived basemap tiles are drawn in batches at most this often.
 constexpr double kTileRedrawSeconds = 0.3;
 constexpr int kMaxTileZoom = 14;
@@ -486,12 +489,23 @@ void MapLayer::prepare(const alarmmap::MapView& view, double now, bool gestureAc
         (now - pendingSince_ >= kSettleSeconds || now - renderedAt_ >= kMaxStaleSeconds)) {
         dirty_ = true;
     }
-    if (!dirty_ || (gestureActive && rendered_)) return;
+    if (!dirty_ || (gestureActive && rendered_ && cacheServes(view))) return;
     render(view);
     rendered_ = true;
     renderedView_ = view;
     renderedAt_ = now;
     dirty_ = false;
+}
+
+bool MapLayer::cacheServes(const alarmmap::MapView& view) const {
+    const double magnification = view.pixelsPerUnit() / renderedView_.pixelsPerUnit();
+    if (magnification > kMaxCacheMagnification || magnification < 1 / kMaxCacheMagnification) return false;
+    const double cachedHalfWidth = cache_.texture.width / kSupersampling / 2 / renderedView_.pixelsPerUnit();
+    const double cachedHalfHeight = cache_.texture.height / kSupersampling / 2 / renderedView_.pixelsPerUnit();
+    const double shownHalfWidth = view.width() / 2 / view.pixelsPerUnit();
+    const double shownHalfHeight = view.height() / 2 / view.pixelsPerUnit();
+    return std::abs(view.center().x - renderedView_.center().x) + shownHalfWidth <= cachedHalfWidth &&
+           std::abs(view.center().y - renderedView_.center().y) + shownHalfHeight <= cachedHalfHeight;
 }
 
 void MapLayer::render(const alarmmap::MapView& view) {
