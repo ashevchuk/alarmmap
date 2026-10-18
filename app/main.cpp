@@ -406,7 +406,9 @@ public:
     }
 
     // Offscreen work that switches render targets; runs before the frame.
-    void prepare(const MapView& view, double now) { mapLayer_.prepare(view, now); }
+    void prepare(const MapView& view, double now, bool gestureActive) {
+        mapLayer_.prepare(view, now, gestureActive);
+    }
 
     void draw(const MapView& view, const Camera2D& camera, const HeatRenderer& heat,
               const TargetIcons& icons, double now, const Focus& focus) const {
@@ -906,6 +908,9 @@ public:
         return tap;
     }
 
+    // Whether a finger is on the screen.
+    bool active() const { return !previous_.empty(); }
+
 private:
     std::map<int, Vector2> previous_;
     Vector2 tapStart_{};
@@ -913,11 +918,12 @@ private:
 };
 
 void renderFrame(Scene& scene, HeatRenderer& heat, const TargetIcons& icons, const MapView& view,
-                 double now, const RenderTexture2D* target, const Focus& focus = {}) {
+                 double now, const RenderTexture2D* target, const Focus& focus = {},
+                 bool gestureActive = false) {
     const auto width = static_cast<int>(view.width());
     const auto height = static_cast<int>(view.height());
     const Camera2D camera = viewCamera(view);
-    scene.prepare(view, now);
+    scene.prepare(view, now, gestureActive);
     // Offscreen heat passes switch render targets, so they run before the frame.
     if (heat.isStale(now, scene.dataVersion(), camera, width, height)) {
         heat.prepare(scene.heatQuadsAt(now), camera, width, height, now, scene.dataVersion());
@@ -1058,7 +1064,11 @@ int run(const Options& options) {
                     // Refreshed every frame so the age of the snapshot keeps counting.
                     scene.status = describeLiveStatus(liveData, nowSeconds());
                 }
+#ifdef __ANDROID__
+                renderFrame(scene, heat, icons, view, now, nullptr, focus, touch.active());
+#else
                 renderFrame(scene, heat, icons, view, now, nullptr, focus);
+#endif
                 const bool interacting = now - lastInteraction < kInteractionHoldSeconds;
                 // A late frame resets the schedule instead of rushing to catch up.
                 nextFrame = std::max(

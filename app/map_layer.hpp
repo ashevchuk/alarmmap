@@ -41,7 +41,9 @@ public:
     void setAlertRegions(const std::set<std::string>* regionIds);
     // Re-renders the cache when needed. Must be called outside
     // BeginDrawing/BeginTextureMode, because it switches render targets.
-    void prepare(const alarmmap::MapView& view, double now);
+    // While `gestureActive`, an existing cache is kept: a re-render stalls a
+    // phone for a moment, and the shifted cache carries the gesture.
+    void prepare(const alarmmap::MapView& view, double now, bool gestureActive = false);
     // Draws the cached map as seen in `view`.
     void draw(const alarmmap::MapView& view) const;
     // Fills regions over the drawn map with the highlight colour at the given
@@ -123,6 +125,7 @@ private:
     int width_ = 0;
     int height_ = 0;
     bool dirty_ = true;
+    bool rendered_ = false;
     alarmmap::MapView renderedView_;
     alarmmap::MapView pendingView_;
     double pendingSince_ = 0;

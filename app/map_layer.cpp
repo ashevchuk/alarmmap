@@ -58,7 +58,17 @@ void main() {
 
 // Rendering at twice the window size and shrinking with bilinear filtering
 // averages 2x2 samples per pixel: smooth edges without MSAA render targets.
+// Phone displays are dense enough without it, and their GPUs pay four times
+// the pixels on every re-render.
+#ifdef __ANDROID__
+constexpr float kSupersampling = 1;
+// Glow masks at this share of the window resolution; glows are soft, and
+// half the size takes a quarter of the pixels and fewer blur passes.
+constexpr float kMaskScale = 0.5f;
+#else
 constexpr float kSupersampling = 2;
+constexpr float kMaskScale = 1;
+#endif
 // The cache reaches this share of the window size past every edge, so a
 // pan shows cached map instead of empty space until the re-render.
 constexpr float kCacheMarginShare = 0.25f;
@@ -299,9 +309,11 @@ void MapLayer::resize(int width, int height) {
     const int areaHeight = static_cast<int>(height * (1 + 2 * kCacheMarginShare));
     cache_ = loadLinearTarget(static_cast<int>(areaWidth * kSupersampling),
                               static_cast<int>(areaHeight * kSupersampling));
-    // Glows are soft anyway, so their masks use the window resolution.
-    country_ = {loadLinearTarget(areaWidth, areaHeight), loadLinearTarget(areaWidth, areaHeight)};
-    alerts_ = {loadLinearTarget(areaWidth, areaHeight), loadLinearTarget(areaWidth, areaHeight)};
+    // Glows are soft anyway, so their masks use at most the window resolution.
+    const int maskWidth = static_cast<int>(areaWidth * kMaskScale);
+    const int maskHeight = static_cast<int>(areaHeight * kMaskScale);
+    country_ = {loadLinearTarget(maskWidth, maskHeight), loadLinearTarget(maskWidth, maskHeight)};
+    alerts_ = {loadLinearTarget(maskWidth, maskHeight), loadLinearTarget(maskWidth, maskHeight)};
     width_ = width;
     height_ = height;
     dirty_ = true;
@@ -321,14 +333,21 @@ void MapLayer::drawFills(const Selection& selection, bool alertsOnly, Color colo
 
 void MapLayer::renderMask(const GlowMasks& masks, const Selection& selection, const Camera2D& camera,
                           bool alertsOnly, float blurRadius) {
-    for (const RenderTexture2D* target : {&masks.sharp, &masks.blurred}) {
-        BeginTextureMode(*target);
-        ClearBackground(BLANK);
-        BeginMode2D(camera);
-        drawFills(selection, alertsOnly, kMaskColor);
-        EndMode2D();
-        EndTextureMode();
-    }
+    BeginTextureMode(masks.sharp);
+    ClearBackground(BLANK);
+    BeginMode2D(camera);
+    drawFills(selection, alertsOnly, kMaskColor);
+    EndMode2D();
+    EndTextureMode();
+    // Copying the sharp mask is far cheaper than filling the regions again.
+    BeginTextureMode(masks.blurred);
+    ClearBackground(BLANK);
+    rlSetBlendFactors(RL_ONE, RL_ZERO, RL_FUNC_ADD);
+    BeginBlendMode(BLEND_CUSTOM);
+    drawTargetStretched(masks.sharp, static_cast<float>(masks.blurred.texture.width),
+                        static_cast<float>(masks.blurred.texture.height));
+    EndBlendMode();
+    EndTextureMode();
     blur_.apply(masks.blurred, blurRadius);
 }
 
@@ -452,7 +471,7 @@ void MapLayer::drawLabels(const Camera2D& camera, float scale, const alarmmap::M
     if (!oblastLabelsPlaced) placeOblastLabels();
 }
 
-void MapLayer::prepare(const alarmmap::MapView& view, double now) {
+void MapLayer::prepare(const alarmmap::MapView& view, double now, bool gestureActive) {
     const auto width = static_cast<int>(view.width());
     const auto height = static_cast<int>(view.height());
     if (width <= 0 || height <= 0) return;
@@ -478,8 +497,9 @@ void MapLayer::prepare(const alarmmap::MapView& view, double now) {
         (now - pendingSince_ >= kSettleSeconds || now - renderedAt_ >= kMaxStaleSeconds)) {
         dirty_ = true;
     }
-    if (!dirty_) return;
+    if (!dirty_ || (gestureActive && rendered_)) return;
     render(view);
+    rendered_ = true;
     renderedView_ = view;
     renderedAt_ = now;
     dirty_ = false;
@@ -488,11 +508,13 @@ void MapLayer::prepare(const alarmmap::MapView& view, double now) {
 void MapLayer::render(const alarmmap::MapView& view) {
     const auto maskWidth = static_cast<float>(country_.sharp.texture.width);
     const auto maskHeight = static_cast<float>(country_.sharp.texture.height);
-    const Camera2D maskCamera = viewCamera(view, maskWidth, maskHeight);
-    const Selection selection = select(view, maskWidth / 2, maskHeight / 2);
-    renderMask(country_, selection, maskCamera, false, kCountryHaloRadiusPx * uiScale());
+    const Camera2D maskCamera = viewCamera(view, maskWidth, maskHeight, kMaskScale);
+    const Selection selection = select(view, maskWidth / kMaskScale / 2, maskHeight / kMaskScale / 2);
+    renderMask(country_, selection, maskCamera, false, kCountryHaloRadiusPx * uiScale() * kMaskScale);
     const bool hasAlerts = !alertRegionIds_.empty();
-    if (hasAlerts) renderMask(alerts_, selection, maskCamera, true, kAlertGlowRadiusPx * uiScale());
+    if (hasAlerts) {
+        renderMask(alerts_, selection, maskCamera, true, kAlertGlowRadiusPx * uiScale() * kMaskScale);
+    }
 
     const Camera2D camera = viewCamera(view, static_cast<float>(cache_.texture.width),
                                        static_cast<float>(cache_.texture.height), kSupersampling);

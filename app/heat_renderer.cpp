@@ -39,6 +39,13 @@ void main() {
 constexpr float kBlurRadiusPerCellPx = 0.75f;
 constexpr float kMinimumBlurRadiusPx = 6;
 constexpr float kMaximumBlurRadiusPx = 70;
+// The blurred mask at this share of the window resolution. Phones pay for
+// every blur pass on a dense screen, and the heat is soft anyway.
+#ifdef __ANDROID__
+constexpr float kMaskScale = 0.5f;
+#else
+constexpr float kMaskScale = 1;
+#endif
 
 }  // namespace
 
@@ -72,14 +79,17 @@ void HeatRenderer::prepare(const std::vector<alarmmap::HeatQuad>& quads, const C
     if (!hasHeat_) return;
     if (width != width_ || height != height_) {
         if (width_ > 0) UnloadRenderTexture(mask_);
-        mask_ = loadLinearTarget(width, height);
+        mask_ = loadLinearTarget(static_cast<int>(width * kMaskScale), static_cast<int>(height * kMaskScale));
         width_ = width;
         height_ = height;
     }
 
+    Camera2D maskCamera = camera;
+    maskCamera.offset = {camera.offset.x * kMaskScale, camera.offset.y * kMaskScale};
+    maskCamera.zoom = camera.zoom * kMaskScale;
     BeginTextureMode(mask_);
     ClearBackground(BLANK);
-    BeginMode2D(camera);
+    BeginMode2D(maskCamera);
     // Maximum, not sum: a shared edge of neighbouring cells must not get
     // brighter because the same pixel is drawn twice.
     rlSetBlendFactors(RL_ONE, RL_ONE, RL_MAX);
@@ -101,7 +111,7 @@ void HeatRenderer::prepare(const std::vector<alarmmap::HeatQuad>& quads, const C
     const float blurRadius =
         std::clamp(static_cast<float>(cellPixels / quads.size()) * kBlurRadiusPerCellPx,
                    kMinimumBlurRadiusPx * uiScale(), kMaximumBlurRadiusPx * uiScale());
-    blur_.apply(mask_, blurRadius);
+    blur_.apply(mask_, blurRadius * kMaskScale);
 }
 
 void HeatRenderer::composite() const {
