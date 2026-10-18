@@ -168,12 +168,23 @@ std::string kindName(TargetKind kind) {
 }
 
 constexpr float kHoverRadiusShare = 0.6f;
+// A fingertip covers more than a cursor, so a tap reaches at least this far.
+constexpr float kTapReachPx = 24;
+// A touch that travels further than this is a drag, not a tap.
+constexpr float kTapSlopPx = 12;
 constexpr float kTooltipGapPx = 10;
 constexpr float kTooltipPaddingPx = 8;
 
 struct StatusLine {
     std::string text;
     Color dot;
+};
+
+// What the user singles out: the mouse hovering on the desktop, or the
+// target last tapped on a touch screen. Its name and path are shown.
+struct Focus {
+    std::optional<Vector2> pointer;
+    std::optional<std::string> trackId;
 };
 
 struct Options {
@@ -397,9 +408,8 @@ public:
     // Offscreen work that switches render targets; runs before the frame.
     void prepare(const MapView& view, double now) { mapLayer_.prepare(view, now); }
 
-    // `pointer` is the mouse position while it hovers over the map.
     void draw(const MapView& view, const Camera2D& camera, const HeatRenderer& heat,
-              const TargetIcons& icons, double now, std::optional<Vector2> pointer) const {
+              const TargetIcons& icons, double now, const Focus& focus) const {
         const auto width = static_cast<float>(view.width());
         const auto height = static_cast<float>(view.height());
         ClearBackground(kScreenClear);
@@ -407,42 +417,37 @@ public:
         mapLayer_.drawHighlights(freshAlertPulses(), view);
         heat.composite();
         mapLayer_.drawVignette(width, height);
-        std::vector<TargetMotion::Marker> markers = motion_.markersAt(now);
-        std::erase_if(markers, [&](const TargetMotion::Marker& marker) {
-            return !visibleTracks_.contains(marker.target.trackId);
-        });
-        // The layout works in unscaled pixels; screenPosition() scales its offsets.
-        const std::vector<MarkerPlacement> placements = layoutMarkers(markers, camera.zoom / uiScale());
+        const std::vector<TargetMotion::Marker> markers = visibleMarkers(now);
+        const std::vector<MarkerPlacement> placements = layout(markers, camera);
         std::vector<TargetMotion::Explosion> explosions = motion_.explosionsAt(now);
         std::erase_if(explosions, [&](const TargetMotion::Explosion& explosion) {
             return !visibleTracks_.contains(explosion.target.trackId);
         });
         for (const auto& explosion : explosions) {
             const Vector2 center = GetWorldToScreen2D(toVector(explosion.position), camera);
-            drawScaledAround(center, [&] {
+            drawScaledAround(center, markerScale(), [&] {
                 drawScorch(center, explosion.age, TargetMotion::kAftermathSeconds,
                            effectSeed(explosion.target.trackId));
             });
         }
-        const MarkerPlacement* hovered =
-            pointer ? hoveredPlacement(placements, markers, camera, *pointer) : nullptr;
+        const MarkerPlacement* hovered = focusedPlacement(placements, markers, camera, focus);
         if (hovered) drawPaths(*hovered, markers, camera, now);
         drawTargets(markers, placements, camera, icons);
         for (const auto& placement : placements) {
             const TargetMotion::Marker& marker = markers[placement.index];
             const Vector2 center = screenPosition(placement, markers, camera);
-            drawScaledAround(center, [&] { drawTeleport(center, marker.age, effectSeed(marker.target.trackId)); });
+            drawScaledAround(center, markerScale(), [&] { drawTeleport(center, marker.age, effectSeed(marker.target.trackId)); });
         }
         for (const auto& explosion : explosions) {
             const Vector2 center = GetWorldToScreen2D(toVector(explosion.position), camera);
-            drawScaledAround(center, [&] {
+            drawScaledAround(center, markerScale(), [&] {
                 drawExplosion(center, explosion.age, effectSeed(explosion.target.trackId));
             });
         }
         // Overlays are laid out in unscaled pixels over a window shrunk by the
         // UI scale, then drawn scaled up.
         const float ui = uiScale();
-        drawScaledAround({0, 0}, [&] {
+        drawScaledAround({0, 0}, ui, [&] {
             if (hovered) drawTooltip(*hovered, markers, camera, width / ui, height / ui);
             drawSummary(markers, icons, static_cast<int>(height / ui));
             if (status) drawStatus(*status);
@@ -450,9 +455,44 @@ public:
         });
     }
 
+    // Track of the target marker under a tap, if any.
+    std::optional<std::string> trackAt(const Camera2D& camera, double now, Vector2 point) const {
+        const std::vector<TargetMotion::Marker> markers = visibleMarkers(now);
+        const std::vector<MarkerPlacement> placements = layout(markers, camera);
+        const MarkerPlacement* placement = placementAt(placements, markers, camera, point, kTapReachPx * uiScale());
+        if (!placement) return std::nullopt;
+        return markers[placement->index].target.trackId;
+    }
+
     std::optional<StatusLine> status;
 
 private:
+    std::vector<TargetMotion::Marker> visibleMarkers(double now) const {
+        std::vector<TargetMotion::Marker> markers = motion_.markersAt(now);
+        std::erase_if(markers, [&](const TargetMotion::Marker& marker) {
+            return !visibleTracks_.contains(marker.target.trackId);
+        });
+        return markers;
+    }
+
+    static std::vector<MarkerPlacement> layout(const std::vector<TargetMotion::Marker>& markers,
+                                               const Camera2D& camera) {
+        // The layout works in unscaled pixels; screenPosition() scales its offsets.
+        return layoutMarkers(markers, camera.zoom / markerScale());
+    }
+
+    static const MarkerPlacement* focusedPlacement(const std::vector<MarkerPlacement>& placements,
+                                                   const std::vector<TargetMotion::Marker>& markers,
+                                                   const Camera2D& camera, const Focus& focus) {
+        if (focus.pointer) return placementAt(placements, markers, camera, *focus.pointer, 0);
+        if (!focus.trackId) return nullptr;
+        const auto found = std::find_if(placements.begin(), placements.end(), [&](const MarkerPlacement& placement) {
+            return std::any_of(placement.members.begin(), placement.members.end(),
+                               [&](size_t index) { return markers[index].target.trackId == *focus.trackId; });
+        });
+        return found == placements.end() ? nullptr : &*found;
+    }
+
     // Pulse opacity of regions whose alert started recently, by the wall
     // clock, because alert start times come from the server in UTC.
     std::map<std::string, float> freshAlertPulses() const {
@@ -533,20 +573,22 @@ private:
     static Vector2 screenPosition(const MarkerPlacement& placement,
                                   const std::vector<TargetMotion::Marker>& markers, const Camera2D& camera) {
         const Vector2 position = GetWorldToScreen2D(toVector(markers[placement.index].position), camera);
-        return Vector2{position.x + static_cast<float>(placement.offsetPx) * uiScale(), position.y};
+        return Vector2{position.x + static_cast<float>(placement.offsetPx) * markerScale(), position.y};
     }
 
-    // The marker under the pointer, the nearest one where markers overlap.
-    static const MarkerPlacement* hoveredPlacement(const std::vector<MarkerPlacement>& placements,
-                                                   const std::vector<TargetMotion::Marker>& markers,
-                                                   const Camera2D& camera, Vector2 pointer) {
+    // The marker at `pointer`, the nearest one where markers overlap. The
+    // reach covers most of the icon and at least `minimumReachPx`.
+    static const MarkerPlacement* placementAt(const std::vector<MarkerPlacement>& placements,
+                                              const std::vector<TargetMotion::Marker>& markers,
+                                              const Camera2D& camera, Vector2 pointer, float minimumReachPx) {
         const MarkerPlacement* nearest = nullptr;
         float nearestDistance = 0;
         for (const auto& placement : placements) {
             const Vector2 position = screenPosition(placement, markers, camera);
             const float distance = std::hypot(position.x - pointer.x, position.y - pointer.y);
-            const float radius =
-                kTargetIconPx * uiScale() * static_cast<float>(placement.scale) * kHoverRadiusShare;
+            const float radius = std::max(
+                kTargetIconPx * markerScale() * static_cast<float>(placement.scale) * kHoverRadiusShare,
+                minimumReachPx);
             if (distance <= radius && (!nearest || distance < nearestDistance)) {
                 nearest = &placement;
                 nearestDistance = distance;
@@ -588,7 +630,7 @@ private:
         const float panelHeight = titleExtent.y + subtitleExtent.y + 2 * kTooltipPaddingPx;
         const Vector2 iconOnScreen = screenPosition(placement, markers, camera);
         const Vector2 icon = {iconOnScreen.x / uiScale(), iconOnScreen.y / uiScale()};
-        const float iconHalf = kTargetIconPx * static_cast<float>(placement.scale) / 2;
+        const float iconHalf = kTargetIconPx * markerScale() / uiScale() * static_cast<float>(placement.scale) / 2;
         float left = icon.x + iconHalf + kTooltipGapPx;
         if (left + panelWidth > width) left = icon.x - iconHalf - kTooltipGapPx - panelWidth;
         const float top = std::clamp(icon.y - panelHeight / 2, 0.0f, std::max(0.0f, height - panelHeight));
@@ -619,13 +661,13 @@ private:
                 const TargetMotion::Marker& marker = markers[placement.index];
                 const Vector2 position = screenPosition(placement);
                 const auto opacity = static_cast<float>(marker.opacity);
-                const float size = kTargetIconPx * uiScale() * iconScale(placement);
+                const float size = kTargetIconPx * markerScale() * iconScale(placement);
                 // Without a heading the icon points north.
                 const auto heading = static_cast<float>(marker.target.headingDegrees.value_or(0));
                 const SnoutIcon& icon = icons.forTarget(marker.target);
                 if (shadow) {
-                    const Vector2 shadowAt = {position.x + kShadowOffsetPx.x * uiScale(),
-                                              position.y + kShadowOffsetPx.y * uiScale()};
+                    const Vector2 shadowAt = {position.x + kShadowOffsetPx.x * markerScale(),
+                                              position.y + kShadowOffsetPx.y * markerScale()};
                     icon.draw(shadowAt, size, heading, Fade(BLACK, kShadowOpacity * opacity));
                 } else {
                     icon.draw(position, size, heading, Fade(WHITE, opacity));
@@ -635,7 +677,7 @@ private:
         for (const auto& placement : placements) {
             if (placement.count > 1) {
                 const Vector2 center = screenPosition(placement);
-                drawScaledAround(center, [&] {
+                drawScaledAround(center, markerScale(), [&] {
                     drawCountBadge(center, static_cast<float>(placement.scale), placement.count,
                                    static_cast<float>(markers[placement.index].opacity));
                 });
@@ -797,11 +839,8 @@ void waitForFirstData(const LiveState& state, LiveData& data) {
               << " s, rendering what arrived\n";
 }
 
-// Mouse: wheel zooms at the cursor, left button drags. Keys: + and -
-// zoom at the centre, 0, Home or R show the whole country. Returns whether
-// the view changed.
-bool handleInput(MapView& view) {
-    const MapView before = view;
+// Wheel zooms at the cursor, left button drags.
+void handleMouse(MapView& view) {
     const Vector2 mouse = GetMousePosition();
     if (const float wheel = GetMouseWheelMove(); wheel != 0) {
         view.zoomAt({mouse.x, mouse.y}, std::pow(kWheelZoomStep, wheel));
@@ -810,15 +849,71 @@ bool handleInput(MapView& view) {
         const Vector2 delta = GetMouseDelta();
         if (delta.x != 0 || delta.y != 0) view.panByPixels(delta.x, delta.y);
     }
+}
+
+// + and - zoom at the centre, 0, Home or R show the whole country.
+void handleKeys(MapView& view) {
     const MapPoint middle{view.width() / 2, view.height() / 2};
     if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) view.zoomAt(middle, kKeyZoomStep);
     if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) view.zoomAt(middle, 1 / kKeyZoomStep);
     if (IsKeyPressed(KEY_ZERO) || IsKeyPressed(KEY_HOME) || IsKeyPressed(KEY_R)) view.reset();
-    return !(view == before);
 }
 
+// One finger drags the map, two pinch-zoom around their midpoint; a touch
+// that ends where it started is a tap. Fingers are followed by id, so the
+// map does not jump when a second finger lands or lifts.
+class TouchInput {
+public:
+    // Returns the position of a tap that ended this frame.
+    std::optional<Vector2> update(MapView& view) {
+        std::map<int, Vector2> touches;
+        for (int i = 0; i < GetTouchPointCount(); ++i) touches[GetTouchPointId(i)] = GetTouchPosition(i);
+
+        if (touches.size() == 1 && previous_.contains(touches.begin()->first)) {
+            const Vector2 now = touches.begin()->second;
+            const Vector2 before = previous_.at(touches.begin()->first);
+            view.panByPixels(now.x - before.x, now.y - before.y);
+        } else if (touches.size() >= 2) {
+            const auto first = touches.begin();
+            const auto second = std::next(first);
+            if (previous_.contains(first->first) && previous_.contains(second->first)) {
+                const Vector2 a0 = previous_.at(first->first);
+                const Vector2 b0 = previous_.at(second->first);
+                const Vector2 a1 = first->second;
+                const Vector2 b1 = second->second;
+                const float before = std::hypot(b0.x - a0.x, b0.y - a0.y);
+                const float after = std::hypot(b1.x - a1.x, b1.y - a1.y);
+                const Vector2 middleBefore = {(a0.x + b0.x) / 2, (a0.y + b0.y) / 2};
+                const Vector2 middleAfter = {(a1.x + b1.x) / 2, (a1.y + b1.y) / 2};
+                if (before > 0 && after > 0) view.zoomAt({middleBefore.x, middleBefore.y}, after / before);
+                view.panByPixels(middleAfter.x - middleBefore.x, middleAfter.y - middleBefore.y);
+            }
+        }
+
+        std::optional<Vector2> tap;
+        if (previous_.empty() && touches.size() == 1) {
+            tapStart_ = touches.begin()->second;
+            tapPossible_ = true;
+        }
+        if (touches.size() > 1) tapPossible_ = false;
+        if (touches.size() == 1 && tapPossible_) {
+            const Vector2 at = touches.begin()->second;
+            if (std::hypot(at.x - tapStart_.x, at.y - tapStart_.y) > kTapSlopPx * uiScale()) tapPossible_ = false;
+        }
+        if (touches.empty() && !previous_.empty() && tapPossible_) tap = tapStart_;
+        if (touches.empty()) tapPossible_ = false;
+        previous_ = std::move(touches);
+        return tap;
+    }
+
+private:
+    std::map<int, Vector2> previous_;
+    Vector2 tapStart_{};
+    bool tapPossible_ = false;
+};
+
 void renderFrame(Scene& scene, HeatRenderer& heat, const TargetIcons& icons, const MapView& view,
-                 double now, const RenderTexture2D* target, std::optional<Vector2> pointer = std::nullopt) {
+                 double now, const RenderTexture2D* target, const Focus& focus = {}) {
     const auto width = static_cast<int>(view.width());
     const auto height = static_cast<int>(view.height());
     const Camera2D camera = viewCamera(view);
@@ -832,7 +927,7 @@ void renderFrame(Scene& scene, HeatRenderer& heat, const TargetIcons& icons, con
     } else {
         BeginDrawing();
     }
-    scene.draw(view, camera, heat, icons, now, pointer);
+    scene.draw(view, camera, heat, icons, now, focus);
     if (target) {
         EndTextureMode();
     } else {
@@ -935,10 +1030,27 @@ int run(const Options& options) {
             auto nextFrame = std::chrono::steady_clock::now();
             MapView view;
             double lastInteraction = -kInteractionHoldSeconds;
+            Focus focus;
+#ifdef __ANDROID__
+            TouchInput touch;
+#endif
             while (!WindowShouldClose()) {
                 const double now = nowSeconds();
                 view.setViewport(GetScreenWidth(), GetScreenHeight());
-                if (handleInput(view)) lastInteraction = now;
+                const MapView before = view;
+                handleKeys(view);
+#ifdef __ANDROID__
+                // A tap on a target shows its name and path until the next tap.
+                if (const std::optional<Vector2> tap = touch.update(view)) {
+                    focus.trackId = scene.trackAt(viewCamera(view), now, *tap);
+                }
+#else
+                handleMouse(view);
+                // No hover while dragging the map.
+                const bool hovering = IsCursorOnScreen() && !IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+                focus.pointer = hovering ? std::optional(GetMousePosition()) : std::nullopt;
+#endif
+                if (!(view == before)) lastInteraction = now;
                 if (isLive(options)) {
                     if (state.copyIfNewer(liveVersion, liveData)) {
                         scene.apply(liveData.targets, liveData.alerts, now);
@@ -946,10 +1058,7 @@ int run(const Options& options) {
                     // Refreshed every frame so the age of the snapshot keeps counting.
                     scene.status = describeLiveStatus(liveData, nowSeconds());
                 }
-                // No hover while dragging the map.
-                const bool hovering = IsCursorOnScreen() && !IsMouseButtonDown(MOUSE_BUTTON_LEFT);
-                renderFrame(scene, heat, icons, view, now, nullptr,
-                            hovering ? std::optional(GetMousePosition()) : std::nullopt);
+                renderFrame(scene, heat, icons, view, now, nullptr, focus);
                 const bool interacting = now - lastInteraction < kInteractionHoldSeconds;
                 // A late frame resets the schedule instead of rushing to catch up.
                 nextFrame = std::max(

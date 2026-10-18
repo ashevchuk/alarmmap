@@ -21,11 +21,14 @@ void drawTargetStretched(const RenderTexture2D& target, float width, float heigh
 // the display density in density-independent pixels on Android.
 float uiScale();
 
-// Runs `draw` with the drawing scaled by uiScale() around `pivot`, so sizes
-// and offsets given in unscaled pixels come out at the UI scale.
+// Multiplier for target markers and their effects. They grow slower than
+// text: at the full UI scale they would cover too much of a phone's map.
+float markerScale();
+
+// Runs `draw` with the drawing scaled by `scale` around `pivot`, so sizes
+// and offsets given in unscaled pixels come out scaled.
 template <typename Draw>
-void drawScaledAround(Vector2 pivot, Draw draw) {
-    const float scale = uiScale();
+void drawScaledAround(Vector2 pivot, float scale, Draw draw) {
     rlPushMatrix();
     rlTranslatef(pivot.x, pivot.y, 0);
     rlScalef(scale, scale, 1);

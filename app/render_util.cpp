@@ -7,6 +7,7 @@
 #include <android_native_app_glue.h>
 #endif
 
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -67,3 +68,5 @@ float uiScale() {
 #else
 float uiScale() { return 1; }
 #endif
+
+float markerScale() { return std::sqrt(uiScale()); }
