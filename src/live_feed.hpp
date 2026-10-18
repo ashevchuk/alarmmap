@@ -32,7 +32,8 @@ public:
         std::function<void(const std::string& channel, const nlohmann::json& payload)>;
     // Lifecycle notices: session_start, connected, token_renewal,
     // session_error, snapshot_error, handler_error. Details never contain
-    // the token.
+    // the token. After a handler_error on a publication the channel's
+    // snapshot is fetched again.
     using EventHandler =
         std::function<void(const std::string& event, const nlohmann::json& details)>;
 
@@ -52,7 +53,8 @@ private:
 
     SessionEnd runSession(const FeedCredentials& credentials,
                           std::chrono::steady_clock::time_point end);
-    void deliver(const std::string& channel, const nlohmann::json& payload);
+    // Returns whether the handler accepted the payload.
+    bool deliver(const std::string& channel, const nlohmann::json& payload);
     void deliverSnapshot(const FeedChannel& channel);
     void emit(const std::string& event, nlohmann::json details = nlohmann::json::object());
     bool shouldStop(std::chrono::steady_clock::time_point end) const;

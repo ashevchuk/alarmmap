@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <chrono>
 #include <stdexcept>
 
@@ -73,35 +74,96 @@ std::optional<std::int64_t> parseUtcTimestampMs(std::string_view text) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch()).count();
 }
 
-RegionAlerts activeRegionAlerts(const json& mapUpdate) {
-    const json* payload = &mapUpdate;
-    for (int depth = 0; depth < kMaxEnvelopeDepth && payload->is_object() &&
-                        !payload->contains("alerts") && payload->contains("data");
-         ++depth) {
-        payload = &payload->at("data");
+namespace {
+
+// The payload inside its envelopes, decoded when it came as a JSON string.
+json unwrapMapUpdate(const json& mapUpdate) {
+    json payload = mapUpdate;
+    for (int depth = 0; depth < kMaxEnvelopeDepth; ++depth) {
+        if (payload.is_string()) {
+            try {
+                payload = json::parse(payload.get<std::string>());
+            } catch (const json::parse_error&) {
+                throw std::runtime_error("updateMap payload is a string but not JSON");
+            }
+            continue;
+        }
+        if (payload.is_object() && !payload.contains("alerts") && payload.contains("data")) {
+            payload = json(payload.at("data"));
+            continue;
+        }
+        break;
     }
-    if (!payload->is_object() || !payload->contains("alerts") || !payload->at("alerts").is_array()) {
+    if (!payload.is_object() || !payload.contains("alerts") || !payload.at("alerts").is_array()) {
         throw std::runtime_error("updateMap payload has no alerts array");
     }
+    return payload;
+}
 
+std::optional<std::int64_t> actionIndexOf(const json& payload) {
+    const json* index = nullptr;
+    if (payload.contains("actionIndex") && payload["actionIndex"].is_object() &&
+        payload["actionIndex"].contains("lastActionIndex") && !payload["actionIndex"]["lastActionIndex"].is_null()) {
+        index = &payload["actionIndex"]["lastActionIndex"];
+    } else if (payload.contains("lastActionIndex") && !payload["lastActionIndex"].is_null()) {
+        index = &payload["lastActionIndex"];
+    } else if (payload.contains("lastUpdate") && !payload["lastUpdate"].is_null()) {
+        index = &payload["lastUpdate"];
+    }
+    if (!index) return std::nullopt;
+    if (index->is_number_integer()) return index->get<std::int64_t>();
+    if (index->is_number_float()) {
+        const double value = index->get<double>();
+        if (!std::isfinite(value)) return std::nullopt;
+        return static_cast<std::int64_t>(value);
+    }
+    if (index->is_string()) {
+        const std::string& text = index->get_ref<const std::string&>();
+        std::int64_t value = 0;
+        const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+        if (error == std::errc() && end == text.data() + text.size() && !text.empty()) return value;
+    }
+    return std::nullopt;
+}
+
+// Reads the regions of an unwrapped payload. A region entry that cannot be
+// read is left out and counted, so one odd entry does not hide every alert.
+RegionAlerts readRegions(const json& payload, int& skipped) {
     RegionAlerts alerts;
-    for (const json& region : payload->at("alerts")) {
-        const json& active = region.value("activeAlerts", json::array());
-        if (!active.is_array() || active.empty()) continue;
-        const std::string id = region.at("regionId").get<std::string>();
-        alerts.any.insert(id);
-        if (std::any_of(active.begin(), active.end(), isAirAlert)) alerts.air.insert(id);
-        for (const json& alert : active) {
-            const json& started = alert.contains("lastUpdate") ? alert["lastUpdate"] : json();
-            if (!started.is_string()) continue;
-            // An unreadable time only costs the region its "fresh alert" pulse.
-            const auto startedAt = parseUtcTimestampMs(started.get<std::string>());
-            if (!startedAt) continue;
-            auto [entry, inserted] = alerts.startedAtMs.emplace(id, *startedAt);
-            if (!inserted) entry->second = std::max(entry->second, *startedAt);
+    for (const json& region : payload.at("alerts")) {
+        try {
+            const json& active = region.value("activeAlerts", json::array());
+            if (!active.is_array() || active.empty()) continue;
+            const std::string id = region.at("regionId").get<std::string>();
+            const bool air = std::any_of(active.begin(), active.end(), isAirAlert);
+            alerts.any.insert(id);
+            if (air) alerts.air.insert(id);
+            for (const json& alert : active) {
+                const json& started = alert.is_object() && alert.contains("lastUpdate") ? alert["lastUpdate"] : json();
+                if (!started.is_string()) continue;
+                // An unreadable time only costs the region its "fresh alert" pulse.
+                const auto startedAt = parseUtcTimestampMs(started.get<std::string>());
+                if (!startedAt) continue;
+                auto [entry, inserted] = alerts.startedAtMs.emplace(id, *startedAt);
+                if (!inserted) entry->second = std::max(entry->second, *startedAt);
+            }
+        } catch (const std::exception&) {
+            ++skipped;
         }
     }
     return alerts;
 }
+
+}  // namespace
+
+AlertUpdate readAlertUpdate(const json& mapUpdate) {
+    const json payload = unwrapMapUpdate(mapUpdate);
+    AlertUpdate update;
+    update.actionIndex = actionIndexOf(payload);
+    update.alerts = readRegions(payload, update.skippedRegions);
+    return update;
+}
+
+RegionAlerts activeRegionAlerts(const json& mapUpdate) { return readAlertUpdate(mapUpdate).alerts; }
 
 }  // namespace alarmmap

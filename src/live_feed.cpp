@@ -210,11 +210,13 @@ void LiveFeed::emit(const std::string& event, json details) {
     if (onEvent_) onEvent_(event, details);
 }
 
-void LiveFeed::deliver(const std::string& channel, const json& payload) {
+bool LiveFeed::deliver(const std::string& channel, const json& payload) {
     try {
         onPublication_(channel, payload);
+        return true;
     } catch (const std::exception& error) {
         emit("handler_error", {{"channel", channel}, {"error", error.what()}});
+        return false;
     }
 }
 
@@ -293,8 +295,14 @@ LiveFeed::SessionEnd LiveFeed::runSession(const FeedCredentials& credentials, Cl
             if (!message.contains("id")) {
                 if (result.contains("channel") && result.contains("data")) {
                     const json& envelope = result["data"];
-                    deliver(result["channel"].get<std::string>(),
-                            envelope.contains("data") ? envelope["data"] : envelope);
+                    const std::string channel = result["channel"].get<std::string>();
+                    // Like the site, fetch the full state when a publication
+                    // cannot be applied, instead of waiting for the next one.
+                    if (!deliver(channel, envelope.contains("data") ? envelope["data"] : envelope)) {
+                        const auto known = std::find_if(channels_.begin(), channels_.end(),
+                                                        [&](const FeedChannel& c) { return c.name == channel; });
+                        if (known != channels_.end()) deliverSnapshot(*known);
+                    }
                 }
                 continue;
             }

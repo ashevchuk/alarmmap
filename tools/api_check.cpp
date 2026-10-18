@@ -60,7 +60,13 @@ public:
                     ++result.skipped;  // an older or repeated snapshot, as the app drops it
                 }
             } else if (channel == alarmmap::kAlertsChannel) {
-                alarmmap::activeRegionAlerts(payload);
+                // The app gets by with part of a payload; for this check any
+                // part it had to leave out means the format changed.
+                const alarmmap::AlertUpdate update = alarmmap::readAlertUpdate(payload);
+                if (update.skippedRegions > 0) {
+                    throw std::runtime_error(std::to_string(update.skippedRegions) + " region entries unreadable");
+                }
+                if (!update.actionIndex) throw std::runtime_error("no action index");
                 ++result.parsed;
             } else {
                 throw std::runtime_error("publication on an unexpected channel");

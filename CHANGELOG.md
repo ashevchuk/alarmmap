@@ -6,6 +6,14 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Alerts no longer go stale for half a minute after an update the program
+  cannot read: it fetches the full alert state at once, as the site does. An
+  update sent as a JSON string is now read, an update missing its order or
+  with an odd region entry still applies what it can, and a late update no
+  longer rolls back a newer one.
+
 ## [0.2.2] - 2026-10-18
 
 ### Changed

@@ -768,6 +768,7 @@ enum class Connection { Connecting, Live, Offline };
 struct LiveData {
     std::optional<TargetSnapshot> targets;
     std::optional<RegionAlerts> alerts;
+    std::optional<std::int64_t> alertsActionIndex;
     Connection connection = Connection::Connecting;
     // When the next connection attempt starts, while offline.
     double retryAt = 0;
@@ -787,9 +788,20 @@ public:
             data_.targets = std::move(snapshot);
             ++data_.version;
         } else if (channel == kAlertsChannel) {
-            RegionAlerts alerts = activeRegionAlerts(payload);
+            AlertUpdate update = readAlertUpdate(payload);
+            if (update.skippedRegions > 0 || !update.actionIndex) {
+                std::cout << "feed: updateMap read in part: skipped regions=" << update.skippedRegions
+                          << (update.actionIndex ? "" : ", no action index") << '\n';
+            }
             std::lock_guard lock(mutex_);
-            data_.alerts = std::move(alerts);
+            // A late snapshot must not roll back a newer publication; without
+            // indexes on both the order is unknown and the newest arrival wins.
+            if (data_.alerts && update.actionIndex && data_.alertsActionIndex &&
+                *update.actionIndex < *data_.alertsActionIndex) {
+                return;
+            }
+            data_.alerts = std::move(update.alerts);
+            data_.alertsActionIndex = update.actionIndex;
             ++data_.version;
         }
     }

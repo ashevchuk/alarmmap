@@ -459,6 +459,52 @@ void testAlertRegions() {
     check(threw, "payload without alerts throws");
 }
 
+void testAlertUpdates() {
+    const json alerts = json::array({{{"regionId", "16"}, {"activeAlerts", json::array({{{"type", "AIR"}}})}}});
+    const auto rejects = [](const json& payload) {
+        try {
+            readAlertUpdate(payload);
+        } catch (const std::runtime_error&) {
+            return true;
+        }
+        return false;
+    };
+
+    const json nested = {{"alerts", alerts}, {"actionIndex", {{"lastActionIndex", 639279377448383085LL}}}};
+    const AlertUpdate update = readAlertUpdate(nested);
+    check(update.actionIndex == 639279377448383085LL, "the action index comes back to the last digit");
+    check(update.alerts.air == std::set<std::string>{"16"}, "the alerts are read as before");
+
+    check(readAlertUpdate(json(nested.dump())).actionIndex == 639279377448383085LL,
+          "a payload sent as a JSON string is read like an object");
+    check(readAlertUpdate(json{{"data", json{{"data", nested.dump()}}}}).actionIndex == 639279377448383085LL,
+          "a JSON string inside envelopes is read too");
+    check(readAlertUpdate(json{{"alerts", alerts}, {"lastActionIndex", 42}}).actionIndex == 42,
+          "the index may stand at the top level");
+    check(readAlertUpdate(json{{"alerts", alerts}, {"lastUpdate", 7}}).actionIndex == 7,
+          "lastUpdate serves as the index last");
+    check(readAlertUpdate(json{{"alerts", alerts}, {"lastActionIndex", "123"}}).actionIndex == 123,
+          "a numeric string counts as an index");
+
+    const AlertUpdate unordered = readAlertUpdate(json{{"alerts", alerts}});
+    check(!unordered.actionIndex && unordered.alerts.air == std::set<std::string>{"16"},
+          "without an index the alerts still apply, only unordered");
+    check(!readAlertUpdate(json{{"alerts", alerts}, {"lastUpdate", "2026-10-17T21:00:00Z"}}).actionIndex,
+          "a date is not an index, as on the site");
+
+    json mixed = alerts;
+    mixed.push_back({{"activeAlerts", json::array({{{"type", "AIR"}}})}});  // no regionId
+    mixed.push_back("not a region");
+    mixed.push_back({{"regionId", "5"}, {"activeAlerts", json::array({"odd"})}});
+    const AlertUpdate partial = readAlertUpdate(json{{"alerts", mixed}, {"lastActionIndex", 1}});
+    check(partial.skippedRegions == 2, "unreadable region entries are counted");
+    check(partial.alerts.any == std::set<std::string>{"16", "5"} && partial.alerts.air == std::set<std::string>{"16"},
+          "the readable regions still apply");
+
+    check(rejects(json{{"actionIndex", {{"lastActionIndex", 1}}}}), "a payload without alerts is unusable");
+    check(rejects(json("{not json")), "a string that is not JSON is unusable");
+}
+
 }  // namespace
 
 int main() {
@@ -473,6 +519,7 @@ int main() {
         testCities();
         testTimestamps();
         testAlertRegions();
+        testAlertUpdates();
     } catch (const std::exception& error) {
         std::cerr << "unexpected exception: " << error.what() << '\n';
         return 1;
