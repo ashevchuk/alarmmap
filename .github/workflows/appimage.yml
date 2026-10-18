@@ -84,4 +84,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           test "${GITHUB_REF_NAME}" = "v${VERSION}"
-          gh release create "${GITHUB_REF_NAME}" ./*.AppImage --title "alarmmap ${VERSION}" --generate-notes
+          tools/release_notes.sh "${VERSION}" > release-notes.md
+          gh release create "${GITHUB_REF_NAME}" ./*.AppImage --title "alarmmap ${VERSION}" \
+            --notes-file release-notes.md --generate-notes
