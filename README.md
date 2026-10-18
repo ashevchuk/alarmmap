@@ -4,6 +4,8 @@ A desktop map of air raid alerts and aerial targets over Ukraine, updated live.
 
 ![alarmmap showing alert regions and tracked targets](docs/screenshot.png)
 
+https://github.com/user-attachments/assets/f7af413e-2d83-472f-a244-8f9a1e0d3359
+
 alarmmap draws the data of [map.ukrainealarm.com](https://map.ukrainealarm.com)
 in a native window: regions under alert, drones, missiles, guided bombs and
 other targets with their heat trails, over an OpenFreeMap basemap with place
