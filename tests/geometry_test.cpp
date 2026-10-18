@@ -269,14 +269,28 @@ void testPreparedRegions() {
     const std::string bytes = writePreparedRegions(original);
     const PreparedRegions restored = readPreparedRegions(bytes);
 
-    const auto samePoints = [](const std::vector<MapPoint>& a, const std::vector<MapPoint>& b) {
+    // Points come back within half a quantization step: 1/65535 of the
+    // shape's extent, here taken from its bounds and its exact polygons.
+    double tolerance = 0;
+    const auto samePoints = [&](const std::vector<MapPoint>& a, const std::vector<MapPoint>& b) {
         if (a.size() != b.size()) return false;
         for (size_t i = 0; i < a.size(); ++i) {
-            if (!near(a[i].x, b[i].x, 1e-4) || !near(a[i].y, b[i].y, 1e-4)) return false;
+            if (!near(a[i].x, b[i].x, tolerance) || !near(a[i].y, b[i].y, tolerance)) return false;
         }
         return true;
     };
     const auto sameShape = [&](const RegionShape& a, const RegionShape& b, bool withPolygons) {
+        MapPoint low = a.boundsMin;
+        MapPoint high = a.boundsMax;
+        for (const auto& polygon : a.polygons) {
+            for (const auto& ring : polygon) {
+                for (const MapPoint& point : ring) {
+                    low = {std::min(low.x, point.x), std::min(low.y, point.y)};
+                    high = {std::max(high.x, point.x), std::max(high.y, point.y)};
+                }
+            }
+        }
+        tolerance = std::max(high.x - low.x, high.y - low.y) / 65535 / 2 + 1e-12;
         bool same = a.id == b.id && a.name == b.name && a.rank == b.rank && a.indices == b.indices &&
                     samePoints(a.vertices, b.vertices) && a.outlines.size() == b.outlines.size() &&
                     samePoints({a.boundsMin, a.boundsMax}, {b.boundsMin, b.boundsMax});
@@ -312,6 +326,7 @@ void testPreparedRegions() {
     check(rejects(bytes + "x"), "trailing data is rejected");
     check(rejects("NOTGEO__" + bytes.substr(8)), "a foreign file is rejected");
     check(rejects(""), "empty data is rejected");
+    check(rejects(std::string("ALARMGEO") + std::string(11, '\xff')), "an endless number is rejected");
 
     // An outline longer than the bytes left after it: ring lengths count
     // vertices, which precede them.

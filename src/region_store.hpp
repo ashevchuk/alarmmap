@@ -25,8 +25,9 @@ struct PreparedRegions {
     std::vector<RegionShape> detailed;
 };
 
-// Binary form with points as 32-bit floats; precise to centimetres on the
-// map plane.
+// Compact binary form. A point is stored as whole steps of 1/65535 of its
+// shape's extent, as the difference from the point before; a point read back
+// is off by at most half a step, a couple of metres on the largest oblast.
 std::string writePreparedRegions(const PreparedRegions& regions);
 // Throws std::runtime_error on data that is not in that form.
 PreparedRegions readPreparedRegions(std::string_view bytes);

@@ -6,6 +6,11 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The APK and the AppImage are about 2 MB smaller: the bundled region
+  geometry is stored more compactly.
+
 ## [0.2.1] - 2026-10-18
 
 ### Changed
