@@ -6,6 +6,12 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-18
+
+### Added
+
+- A small hidden surprise.
+
 ## [0.2.3] - 2026-10-18
 
 ### Fixed
@@ -96,7 +102,8 @@ project follows [Semantic Versioning](https://semver.org/).
 - Window icon.
 - Installable, relocatable build and an x86-64 AppImage.
 
-[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/ashevchuk/alarmmap/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/ashevchuk/alarmmap/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/ashevchuk/alarmmap/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ashevchuk/alarmmap/compare/v0.2.0...v0.2.1
