@@ -179,19 +179,40 @@ void testTargetMotion() {
 
     motion.update({target("b", 0.5, 0.5)}, 30);
     check(motion.markersAt(30).size() == 1, "a new track starts fully transparent");
-    markers = motion.markersAt(31.5);
+    markers = motion.markersAt(30 + TargetMotion::kFadeInSeconds / 2);
     check(markers.size() == 2 && markers[0].target.trackId == "b" && near(markers[0].opacity, 0.5) &&
               markers[1].target.trackId == "a" && near(markers[1].opacity, 1),
           "new track fades in, missing track is held");
-    markers = motion.markersAt(50);
-    check(markers.size() == 2 && near(markers[1].opacity, 0.5), "missing track fades after the hold");
-    markers = motion.markersAt(60);
-    check(markers.size() == 1 && markers[0].target.trackId == "b", "faded track is not drawn");
+    check(motion.explosionsAt(39).empty(), "no explosion during the hold");
+    markers = motion.markersAt(40 + TargetMotion::kVanishSeconds / 2);
+    check(markers.size() == 2 && near(markers[1].opacity, 0.5, 1e-9), "missing track vanishes after the hold");
+    auto explosions = motion.explosionsAt(41);
+    check(explosions.size() == 1 && explosions[0].target.trackId == "a" && near(explosions[0].age, 1, 1e-9) &&
+              near(explosions[0].position.x, normalizedToMap(0.3, 0.1).x, 1e-9),
+          "vanishing track explodes where it is drawn");
+    markers = motion.markersAt(41);
+    check(markers.size() == 1 && markers[0].target.trackId == "b", "vanished track is not drawn");
+    check(motion.explosionsAt(40 + TargetMotion::kExplosionSeconds + 1).size() == 1,
+          "scorch mark stays after the blast");
+    check(motion.explosionsAt(40 + TargetMotion::kAftermathSeconds).empty(), "scorch mark fades away");
 
-    motion.update({target("b", 0.5, 0.5), target("a", 0.3, 0.1)}, 45);
-    markers = motion.markersAt(45);
-    check(markers.size() == 2 && markers[1].target.trackId == "a" && near(markers[1].opacity, 1),
-          "track coming back before it faded is fully visible again");
+    motion.update({target("b", 0.5, 0.5), target("a", 0.3, 0.1)}, 38);
+    markers = motion.markersAt(38);
+    check(markers.size() == 2 && markers[1].target.trackId == "a" && near(markers[1].opacity, 1) &&
+              motion.explosionsAt(48).empty(),
+          "track coming back during the hold is fully visible again");
+    check(near(markers[0].age, 8), "marker knows its age");
+
+    {
+        TargetMotion exploded;
+        exploded.update({target("x", 0.1, 0.1)}, 0);
+        exploded.update({}, 1);
+        exploded.update({target("x", 0.4, 0.4)}, 20);
+        const auto again = exploded.markersAt(21);
+        check(again.size() == 1 && near(again[0].age, 1) && again[0].position == normalizedToMap(0.4, 0.4) &&
+                  exploded.explosionsAt(20).empty() && exploded.pathAt("x", 20).size() == 2,
+              "track reported after its explosion appears anew, keeping its path");
+    }
 
     motion.update({target("b", 0.5, 0.5)}, 46);
     motion.update({target("b", 0.5, 0.5)}, 80);
@@ -199,6 +220,40 @@ void testTargetMotion() {
     markers = motion.markersAt(81 + TargetMotion::kFadeInSeconds);
     check(markers.size() == 2 && markers[1].position == normalizedToMap(0.9, 0.9),
           "track faded out completely returns as new, without a glide");
+}
+
+void testTargetPath() {
+    TargetMotion motion;
+    check(motion.pathAt("a", 0).empty(), "unknown track has no path");
+
+    motion.update({target("a", 0.1, 0.1)}, 0);
+    Target shifted = target("a", 0.1, 0.1);
+    shifted.markerOffsetX = 0.001;
+    motion.update({shifted}, 10);
+    auto path = motion.pathAt("a", 10);
+    check(path.size() == 1 && path[0] == normalizedToMap(0.1, 0.1),
+          "a new offset in the same cell adds no point");
+
+    motion.update({target("a", 0.2, 0.1)}, 20);
+    path = motion.pathAt("a", 30);
+    check(path.size() == 2 && path[0] == normalizedToMap(0.1, 0.1) &&
+              near(path[1].x, normalizedToMap(0.15, 0.1).x, 1e-9),
+          "path ends at the gliding marker");
+    path = motion.pathAt("a", 100);
+    check(path.size() == 2 && path[1] == normalizedToMap(0.2, 0.1), "path ends in the reached cell");
+
+    // Gone long enough for the marker to fade, back before the path expires.
+    motion.update({}, 100);
+    motion.update({}, 200);
+    check(motion.markersAt(200).empty(), "marker faded out");
+    motion.update({target("a", 0.3, 0.1)}, 300);
+    path = motion.pathAt("a", 300);
+    check(path.size() == 3 && path[2] == normalizedToMap(0.3, 0.1),
+          "returning track continues its path");
+
+    motion.update({}, 400);
+    motion.update({}, 300 + TargetMotion::kPathRetentionSeconds + 1);
+    check(motion.pathAt("a", 1000).empty(), "path expires after the retention time");
 }
 
 TargetMotion::Marker settledMarker(const std::string& id, double x, double y, int type,
@@ -316,6 +371,7 @@ int main(int argc, char** argv) {
         testAirAlertFilter();
         testConnectionFilter();
         testTargetMotion();
+        testTargetPath();
         testTargetKinds();
         testMarkerLayout();
     } catch (const std::exception& error) {

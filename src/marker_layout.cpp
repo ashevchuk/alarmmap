@@ -86,7 +86,7 @@ std::vector<MarkerPlacement> layoutMarkers(const std::vector<TargetMotion::Marke
                 const auto active = std::count_if(group.begin(), group.end(),
                                                   [&](size_t index) { return !markers[index].fadingOut; });
                 const int count = static_cast<int>(active > 0 ? active : group.size());
-                placements.push_back({group.front(), count, offsetPx, scale});
+                placements.push_back({group.front(), count, offsetPx, scale, group});
             }
         }
     }

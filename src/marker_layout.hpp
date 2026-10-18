@@ -17,6 +17,8 @@ struct MarkerPlacement {
     // in one cell side by side.
     double offsetPx = 0;
     double scale = 1;
+    // Indices of all markers it stands for, the drawn one first.
+    std::vector<size_t> members;
 };
 
 // Grouping of map.ukrainealarm.com (detailTargetGroups.js): markers of one

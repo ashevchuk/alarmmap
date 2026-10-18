@@ -53,6 +53,7 @@ add_executable(alarmmap
     app/map_layer.cpp
     app/render_util.cpp
     app/snout_icon.cpp
+    app/target_effects.cpp
     app/ui_font.cpp)
 target_link_libraries(alarmmap PRIVATE alarmmap_core raylib Threads::Threads)
 target_compile_definitions(alarmmap PRIVATE ALARMMAP_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
