@@ -4,6 +4,11 @@ project(alarmmap VERSION 0.2.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Fused multiply-add rounds differently from a separate multiply and add,
+# which makes earcut's geometric tests inconsistent: on ARM, where compilers
+# fuse by default, it looped forever on some region outlines.
+add_compile_options(-ffp-contract=off)
+
 include(FetchContent)
 FetchContent_Declare(nlohmann_json
     URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
