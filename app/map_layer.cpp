@@ -183,9 +183,15 @@ void drawTriangles(const std::vector<MapPoint>& vertices, const std::vector<std:
 
 void drawFill(const RegionShape& shape, Color color) { drawTriangles(shape.vertices, shape.indices, color); }
 
+// Web map zoom of the view in density-independent pixels, as web maps
+// count it: a dense phone screen gets the detail a desktop shows at the same
+// physical size, not three times more.
+double tileZoomOf(const alarmmap::MapView& view) {
+    return alarmmap::tileZoomForScale(view.pixelsPerUnit() / uiScale());
+}
+
 int tileZoomFor(const alarmmap::MapView& view) {
-    return std::clamp(static_cast<int>(std::floor(alarmmap::tileZoomForScale(view.pixelsPerUnit()))), 0,
-                      kMaxTileZoom);
+    return std::clamp(static_cast<int>(std::floor(tileZoomOf(view))), 0, kMaxTileZoom);
 }
 
 std::string shortRegionName(const std::string& name) {
@@ -412,7 +418,7 @@ void MapLayer::drawLabels(const Camera2D& camera, float scale, const alarmmap::M
         }
     };
 
-    const double tileZoom = alarmmap::tileZoomForScale(view.pixelsPerUnit());
+    const double tileZoom = tileZoomOf(view);
     const auto targetWidth = static_cast<float>(cache_.texture.width);
     const auto targetHeight = static_cast<float>(cache_.texture.height);
     std::vector<std::pair<const alarmmap::City*, Vector2>> cities;
