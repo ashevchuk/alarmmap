@@ -22,6 +22,7 @@
 #include "projection.hpp"
 #include "region_geometry.hpp"
 #include "region_store.hpp"
+#include "site.hpp"
 #include "render_util.hpp"
 #include "snout_icon.hpp"
 #include "target_effects.hpp"
@@ -72,11 +73,6 @@ namespace {
 constexpr const char* kPreparedRegionsFile = "regions.bin";
 constexpr const char* kCitiesFile = "cities.geojson";
 constexpr const char* kTileJsonUrl = "https://tiles.openfreemap.org/planet";
-constexpr const char* kTargetsChannel = "mapTargets_heat_legacy_v2";
-constexpr const char* kTargetsSnapshotUrl =
-    "https://map.ukrainealarm.com/api/v2/data/targetsForMapsState/public?separateTracks=false";
-constexpr const char* kAlertsChannel = "updateMap";
-constexpr const char* kAlertsSnapshotUrl = "https://map.ukrainealarm.com/api/v2/data/mapUpdate";
 constexpr auto kScreenshotDataTimeout = std::chrono::seconds(30);
 constexpr auto kScreenshotPollInterval = std::chrono::milliseconds(100);
 

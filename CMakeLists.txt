@@ -91,6 +91,11 @@ add_executable(ws_probe tools/ws_probe.cpp)
 target_link_libraries(ws_probe PRIVATE alarmmap_core)
 target_compile_options(ws_probe PRIVATE ${WARNING_FLAGS})
 
+add_executable(api_check tools/api_check.cpp)
+target_link_libraries(api_check PRIVATE alarmmap_core)
+target_compile_definitions(api_check PRIVATE ALARMMAP_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+target_compile_options(api_check PRIVATE ${WARNING_FLAGS})
+
 enable_testing()
 foreach(test_name target_snapshot geometry heat basemap mesh)
     add_executable(${test_name}_test tests/${test_name}_test.cpp)

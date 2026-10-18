@@ -102,6 +102,24 @@ Basemap tiles are cached in `$XDG_CACHE_HOME/alarmmap` (by default
 raylib, mbedTLS and libcurl for Android itself. See the comment at its top
 for what it needs and how to sign with your own key.
 
+## Checking the site's API
+
+The program depends on how map.ukrainealarm.com serves its data. To check
+that it still does, for example before a release:
+
+```sh
+./build/api_check            # listens to the live feed for 90 s
+./build/api_check 300        # or longer
+```
+
+It connects the way the program does, runs every snapshot and publication
+through the program's own parsers, then checks that the site's current region
+geometry still prepares and compares it with `data/`. It exits with 0 when
+everything parses, 1 when the site changed in a way the program does not
+understand, saving the failed payloads to `api-check-failures.jsonl`, and 2
+when only `data/regions-standard-v1.geojson` is out of date. The site turns
+away GitHub's runners, so it is run by hand rather than in CI.
+
 ## Data and credits
 
 - Alerts, targets and region geometry:

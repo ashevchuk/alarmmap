@@ -4,6 +4,7 @@
 // Usage: ws_probe [duration_seconds] [output_path]
 
 #include "live_feed.hpp"
+#include "site.hpp"
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -23,8 +24,6 @@ namespace {
 
 constexpr int kDefaultDurationSeconds = 120;
 constexpr const char* kDefaultOutputPath = ".notes/ws-probe/messages.jsonl";
-constexpr const char* kTargetsChannel = "mapTargets_heat_legacy_v2";
-constexpr const char* kAlertsChannel = "updateMap";
 
 long long unixMillis() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -47,7 +46,7 @@ int run(int durationSeconds, const std::filesystem::path& outputPath) {
     std::map<std::string, int> publications;
     std::map<std::string, int> events;
     alarmmap::LiveFeed feed(
-        {{kTargetsChannel, ""}, {kAlertsChannel, ""}},
+        {{alarmmap::kTargetsChannel, ""}, {alarmmap::kAlertsChannel, ""}},
         [&](const std::string& channel, const json& payload) {
             ++publications[channel];
             output << json{{"receivedAt", unixMillis()}, {"channel", channel}, {"payload", payload}}

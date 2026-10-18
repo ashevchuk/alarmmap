@@ -1,3 +1,4 @@
 .notes/
 build/
 build-android/
+api-check-failures.jsonl
