@@ -30,9 +30,15 @@
 #include "tile_store.hpp"
 #include "ui_font.hpp"
 
-#include <curl/curl.h>
 #include <raylib.h>
 #include <rlgl.h>
+
+#ifdef __ANDROID__
+#include <android/asset_manager.h>
+#include <android_native_app_glue.h>
+#else
+#include <curl/curl.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -55,6 +61,11 @@
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 using namespace alarmmap;
+
+#ifdef __ANDROID__
+// Defined by raylib's Android platform layer without a declaration in raylib.h.
+extern "C" struct android_app* GetAndroidApp(void);
+#endif
 
 namespace {
 
@@ -201,6 +212,37 @@ double nowSeconds() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
+#ifdef __ANDROID__
+// Files the APK carries. Android exposes assets only through AAssetManager,
+// so they are copied into internal storage, where the regular file code
+// reads them as data and cache.
+constexpr const char* kBundledAssets[] = {
+    "cities.geojson", "crimea.geojson", "fonts/NotoSans-Medium.ttf",
+    "regions-standard-v1.geojson", "targets.json", "alerts.json",
+};
+
+fs::path androidStorage() { return GetAndroidApp()->activity->internalDataPath; }
+
+void extractAssets() {
+    AAssetManager* manager = GetAndroidApp()->activity->assetManager;
+    for (const char* name : kBundledAssets) {
+        AAsset* asset = AAssetManager_open(manager, name, AASSET_MODE_BUFFER);
+        if (!asset) throw std::runtime_error(std::string("missing asset ") + name);
+        const auto* data = static_cast<const char*>(AAsset_getBuffer(asset));
+        const auto size = static_cast<std::streamsize>(AAsset_getLength64(asset));
+        const fs::path path = androidStorage() / name;
+        fs::create_directories(path.parent_path());
+        std::ofstream output(path, std::ios::binary);
+        if (data) output.write(data, size);
+        AAsset_close(asset);
+        if (!data || !output) throw std::runtime_error("cannot extract asset " + std::string(name));
+    }
+}
+
+fs::path cacheDirectory() { return androidStorage(); }
+
+fs::path dataDirectory() { return androidStorage(); }
+#else
 fs::path cacheDirectory() {
     if (const char* xdg = std::getenv("XDG_CACHE_HOME"); xdg && *xdg) {
         return fs::path(xdg) / "alarmmap";
@@ -222,6 +264,7 @@ fs::path dataDirectory() {
     }
     return ALARMMAP_DATA_DIR;
 }
+#endif
 
 fs::path ensureGeometryFile() {
     const fs::path path = cacheDirectory() / kGeometryFileName;
@@ -816,7 +859,12 @@ int run(const Options& options) {
     if (options.screenshot) flags |= FLAG_WINDOW_HIDDEN;
     SetConfigFlags(flags);
     SetTraceLogLevel(LOG_WARNING);
+#ifdef __ANDROID__
+    // Zero size takes the whole display; any other size is letterboxed into it.
+    InitWindow(0, 0, "alarmmap");
+#else
     InitWindow(kInitialWidth, kInitialHeight, "alarmmap");
+#endif
     if (!IsWindowReady()) throw std::runtime_error("cannot open window");
     SetWindowMinSize(kMinimumWidth, kMinimumHeight);
     // Triangulated polygons and mirrored icon parts come in both windings.
@@ -894,11 +942,19 @@ int run(const Options& options) {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifndef __ANDROID__
     // Before any thread starts: curl_global_init is not thread-safe.
     curl_global_init(CURL_GLOBAL_DEFAULT);
+#endif
     int exitCode = 1;
     try {
-        const Options options = parseOptions(argc, argv);
+        Options options = parseOptions(argc, argv);
+#ifdef __ANDROID__
+        // Without network access the app shows the snapshot its APK carries.
+        extractAssets();
+        options.targets = androidStorage() / "targets.json";
+        options.alerts = androidStorage() / "alerts.json";
+#endif
         if (options.version) {
             std::cout << "alarmmap " ALARMMAP_VERSION "\n";
             exitCode = 0;
@@ -907,7 +963,13 @@ int main(int argc, char** argv) {
         }
     } catch (const std::exception& error) {
         std::cerr << "alarmmap: " << error.what() << '\n';
+#ifdef __ANDROID__
+        // Standard error goes nowhere on Android; raylib's log reaches logcat.
+        TraceLog(LOG_ERROR, "alarmmap: %s", error.what());
+#endif
     }
+#ifndef __ANDROID__
     curl_global_cleanup();
+#endif
     return exitCode;
 }

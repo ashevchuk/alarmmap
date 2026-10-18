@@ -4,9 +4,28 @@
 
 #include <stdexcept>
 #include <string>
+#include <string_view>
+
+namespace {
+
+#ifdef __ANDROID__
+// OpenGL ES 3.0 accepts the desktop GLSL 3.30 sources under its own version
+// line, with the float precision stated explicitly.
+std::string targetGlsl(const char* source) {
+    constexpr std::string_view kDesktopVersion = "#version 330";
+    std::string glsl = source;
+    if (!glsl.starts_with(kDesktopVersion)) throw std::runtime_error("shader without #version 330");
+    glsl.replace(0, kDesktopVersion.size(), "#version 300 es\nprecision highp float;");
+    return glsl;
+}
+#else
+std::string targetGlsl(const char* source) { return source; }
+#endif
+
+}  // namespace
 
 Shader loadFragmentShader(const char* source, const char* name) {
-    const Shader shader = LoadShaderFromMemory(nullptr, source);
+    const Shader shader = LoadShaderFromMemory(nullptr, targetGlsl(source).c_str());
     // raylib falls back to its default shader when compilation fails.
     if (shader.id == rlGetShaderIdDefault()) {
         throw std::runtime_error(std::string("cannot compile ") + name + " shader");
