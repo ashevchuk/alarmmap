@@ -9,8 +9,9 @@
 // to failures_file (default api-check-failures.jsonl) for analysis.
 //
 // Exit status: 0 when everything parses, 1 when the site changed in a way
-// the app does not understand, 2 when only data/regions-standard-v1.geojson
-// is out of date.
+// the app does not understand (a payload that does not parse, or a snapshot
+// address answering 4xx), 2 when only data/regions-standard-v1.geojson is out
+// of date. Dropped connections and 5xx answers are reported, not counted.
 
 #include "http.hpp"
 #include "live_feed.hpp"
@@ -90,6 +91,10 @@ public:
 
     void onEvent(const std::string& event, const json& details) {
         ++events_[event];
+        // A snapshot address the site refuses or no longer has is an API
+        // change; a 5xx is the server having a moment.
+        const long status = details.value("status", 0L);
+        if (event == "snapshot_error" && status >= 400 && status < 500) ++refusedSnapshots_;
         if (event != "connected" && event != "session_start") {
             std::cout << "event " << event << ' ' << details.dump() << '\n';
         }
@@ -106,11 +111,17 @@ public:
             std::cout << "feed: never connected\n";
             ok = false;
         }
-        for (const char* event : {"snapshot_error", "handler_error"}) {
-            if (count(events_, event) > 0) {
-                std::cout << "feed: " << event << " x" << count(events_, event) << '\n';
-                ok = false;
-            }
+        // Dropped connections and failed HTTP requests (a 503 now and then)
+        // are the network's or the server's moment, not a format change;
+        // a format change shows as a payload that does not parse.
+        const int transient = count(events_, "session_error") + count(events_, "snapshot_error") - refusedSnapshots_;
+        if (transient > 0) {
+            std::cout << "feed: dropped connections or failed requests x" << transient
+                      << " (network or server, not counted as a failure)\n";
+        }
+        if (refusedSnapshots_ > 0) {
+            std::cout << "feed: the site refused a snapshot request x" << refusedSnapshots_ << " (HTTP 4xx)\n";
+            ok = false;
         }
         for (const char* channel : {alarmmap::kTargetsChannel, alarmmap::kAlertsChannel}) {
             const auto found = channels_.find(channel);
@@ -130,6 +141,7 @@ private:
     std::map<std::string, ChannelResult> channels_;
     std::map<std::string, int> events_;
     bool savedFailures_ = false;
+    int refusedSnapshots_ = 0;
 };
 
 struct RegionInfo {

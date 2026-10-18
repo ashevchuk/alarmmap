@@ -48,7 +48,7 @@ std::string httpGet(const std::string& url) {
     long status = 0;
     curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
     if (status != 200) {
-        throw std::runtime_error("GET " + url + " returned HTTP " + std::to_string(status));
+        throw HttpError("GET " + url + " returned HTTP " + std::to_string(status), status);
     }
     return body;
 }

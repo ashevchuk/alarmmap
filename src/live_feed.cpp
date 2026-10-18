@@ -226,6 +226,8 @@ void LiveFeed::deliverSnapshot(const FeedChannel& channel) {
     // next publication on the channel brings the state anyway.
     try {
         deliver(channel.name, json::parse(httpGet(channel.snapshotUrl)));
+    } catch (const HttpError& error) {
+        emit("snapshot_error", {{"channel", channel.name}, {"error", error.what()}, {"status", error.status()}});
     } catch (const std::exception& error) {
         emit("snapshot_error", {{"channel", channel.name}, {"error", error.what()}});
     }

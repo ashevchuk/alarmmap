@@ -116,8 +116,10 @@ It connects the way the program does, runs every snapshot and publication
 through the program's own parsers, then checks that the site's current region
 geometry still prepares and compares it with `data/`. It exits with 0 when
 everything parses, 1 when the site changed in a way the program does not
-understand, saving the failed payloads to `api-check-failures.jsonl`, and 2
-when only `data/regions-standard-v1.geojson` is out of date. The site turns
+understand (a payload that does not parse, saved to
+`api-check-failures.jsonl`, or a snapshot address answering 4xx), and 2 when
+only `data/regions-standard-v1.geojson` is out of date. Dropped connections
+and 5xx answers are reported but do not count as failures. The site turns
 away GitHub's runners, so it is run by hand rather than in CI.
 
 ## Data and credits

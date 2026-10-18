@@ -33,7 +33,8 @@ public:
     // Lifecycle notices: session_start, connected, token_renewal,
     // session_error, snapshot_error, handler_error. Details never contain
     // the token. After a handler_error on a publication the channel's
-    // snapshot is fetched again.
+    // snapshot is fetched again. A snapshot_error from an HTTP response
+    // carries its status.
     using EventHandler =
         std::function<void(const std::string& event, const nlohmann::json& details)>;
 
