@@ -1,5 +1,6 @@
 #include "target_effects.hpp"
 
+#include "render_util.hpp"
 #include "target_motion.hpp"
 
 #include <algorithm>
@@ -196,8 +197,12 @@ float teleportIconScale(double age) {
 
 void drawDashedPath(const std::vector<Vector2>& points, float opacity) {
     if (points.size() < 2 || opacity <= 0) return;
-    for (const auto& [thickness, color] : {std::pair{4.5f, withAlpha(BLACK, 0.6f * opacity)},
+    const float ui = uiScale();
+    const float dash = kDashPx * ui;
+    const float period = (kDashPx + kGapPx) * ui;
+    for (const auto& [lineWidth, color] : {std::pair{4.5f, withAlpha(BLACK, 0.6f * opacity)},
                                            std::pair{2.0f, withAlpha(kPathColor, 0.95f * opacity)}}) {
+        const float thickness = lineWidth * ui;
         // Distance into the current dash-and-gap period.
         float phase = 0;
         for (size_t i = 1; i < points.size(); ++i) {
@@ -211,13 +216,13 @@ void drawDashedPath(const std::vector<Vector2>& points, float opacity) {
             };
             float walked = 0;
             while (walked < length) {
-                const bool inDash = phase < kDashPx;
-                const float step = std::min(length - walked, (inDash ? kDashPx : kDashPx + kGapPx) - phase);
+                const bool inDash = phase < dash;
+                const float step = std::min(length - walked, (inDash ? dash : period) - phase);
                 if (inDash) DrawLineEx(pointAt(walked), pointAt(walked + step), thickness, color);
                 walked += step;
-                phase = std::fmod(phase + step, kDashPx + kGapPx);
+                phase = std::fmod(phase + step, period);
             }
         }
-        DrawCircleV(points.front(), thickness + 1, color);
+        DrawCircleV(points.front(), thickness + ui, color);
     }
 }

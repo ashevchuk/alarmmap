@@ -2,6 +2,11 @@
 
 #include <rlgl.h>
 
+#ifdef __ANDROID__
+#include <android/configuration.h>
+#include <android_native_app_glue.h>
+#endif
+
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -49,3 +54,16 @@ void drawTargetStretched(const RenderTexture2D& target, float width, float heigh
     DrawTexturePro(target.texture, flippedSource(target.texture), {0, 0, width, height}, {0, 0}, 0,
                    WHITE);
 }
+
+#ifdef __ANDROID__
+float uiScale() {
+    // Android's density-independent pixel is 1/160 inch.
+    static const float scale = [] {
+        const int32_t density = AConfiguration_getDensity(GetAndroidApp()->config);
+        return density > 0 ? density / 160.0f : 1.0f;
+    }();
+    return scale;
+}
+#else
+float uiScale() { return 1; }
+#endif

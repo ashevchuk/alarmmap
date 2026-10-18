@@ -100,7 +100,7 @@ void HeatRenderer::prepare(const std::vector<alarmmap::HeatQuad>& quads, const C
 
     const float blurRadius =
         std::clamp(static_cast<float>(cellPixels / quads.size()) * kBlurRadiusPerCellPx,
-                   kMinimumBlurRadiusPx, kMaximumBlurRadiusPx);
+                   kMinimumBlurRadiusPx * uiScale(), kMaximumBlurRadiusPx * uiScale());
     blur_.apply(mask_, blurRadius);
 }
 

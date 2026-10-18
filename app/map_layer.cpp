@@ -490,9 +490,9 @@ void MapLayer::render(const alarmmap::MapView& view) {
     const auto maskHeight = static_cast<float>(country_.sharp.texture.height);
     const Camera2D maskCamera = viewCamera(view, maskWidth, maskHeight);
     const Selection selection = select(view, maskWidth / 2, maskHeight / 2);
-    renderMask(country_, selection, maskCamera, false, kCountryHaloRadiusPx);
+    renderMask(country_, selection, maskCamera, false, kCountryHaloRadiusPx * uiScale());
     const bool hasAlerts = !alertRegionIds_.empty();
-    if (hasAlerts) renderMask(alerts_, selection, maskCamera, true, kAlertGlowRadiusPx);
+    if (hasAlerts) renderMask(alerts_, selection, maskCamera, true, kAlertGlowRadiusPx * uiScale());
 
     const Camera2D camera = viewCamera(view, static_cast<float>(cache_.texture.width),
                                        static_cast<float>(cache_.texture.height), kSupersampling);
@@ -510,9 +510,9 @@ void MapLayer::render(const alarmmap::MapView& view) {
     EndMode2D();
     if (hasAlerts) drawGlow(alerts_, kAlertInnerGlow, kAlertOuterGlow);
     BeginMode2D(camera);
-    drawBorders(selection, camera, kSupersampling);
+    drawBorders(selection, camera, kSupersampling * uiScale());
     EndMode2D();
-    drawLabels(camera, kSupersampling, view);
+    drawLabels(camera, kSupersampling * uiScale(), view);
     EndTextureMode();
 }
 

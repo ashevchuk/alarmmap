@@ -22,6 +22,7 @@
 #include "marker_layout.hpp"
 #include "projection.hpp"
 #include "region_geometry.hpp"
+#include "render_util.hpp"
 #include "snout_icon.hpp"
 #include "target_effects.hpp"
 #include "target_kind.hpp"
@@ -61,11 +62,6 @@
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 using namespace alarmmap;
-
-#ifdef __ANDROID__
-// Defined by raylib's Android platform layer without a declaration in raylib.h.
-extern "C" struct android_app* GetAndroidApp(void);
-#endif
 
 namespace {
 
@@ -414,14 +410,18 @@ public:
         std::erase_if(markers, [&](const TargetMotion::Marker& marker) {
             return !visibleTracks_.contains(marker.target.trackId);
         });
-        const std::vector<MarkerPlacement> placements = layoutMarkers(markers, camera.zoom);
+        // The layout works in unscaled pixels; screenPosition() scales its offsets.
+        const std::vector<MarkerPlacement> placements = layoutMarkers(markers, camera.zoom / uiScale());
         std::vector<TargetMotion::Explosion> explosions = motion_.explosionsAt(now);
         std::erase_if(explosions, [&](const TargetMotion::Explosion& explosion) {
             return !visibleTracks_.contains(explosion.target.trackId);
         });
         for (const auto& explosion : explosions) {
-            drawScorch(GetWorldToScreen2D(toVector(explosion.position), camera), explosion.age,
-                       TargetMotion::kAftermathSeconds, effectSeed(explosion.target.trackId));
+            const Vector2 center = GetWorldToScreen2D(toVector(explosion.position), camera);
+            drawScaledAround(center, [&] {
+                drawScorch(center, explosion.age, TargetMotion::kAftermathSeconds,
+                           effectSeed(explosion.target.trackId));
+            });
         }
         const MarkerPlacement* hovered =
             pointer ? hoveredPlacement(placements, markers, camera, *pointer) : nullptr;
@@ -429,16 +429,24 @@ public:
         drawTargets(markers, placements, camera, icons);
         for (const auto& placement : placements) {
             const TargetMotion::Marker& marker = markers[placement.index];
-            drawTeleport(screenPosition(placement, markers, camera), marker.age, effectSeed(marker.target.trackId));
+            const Vector2 center = screenPosition(placement, markers, camera);
+            drawScaledAround(center, [&] { drawTeleport(center, marker.age, effectSeed(marker.target.trackId)); });
         }
         for (const auto& explosion : explosions) {
-            drawExplosion(GetWorldToScreen2D(toVector(explosion.position), camera), explosion.age,
-                          effectSeed(explosion.target.trackId));
+            const Vector2 center = GetWorldToScreen2D(toVector(explosion.position), camera);
+            drawScaledAround(center, [&] {
+                drawExplosion(center, explosion.age, effectSeed(explosion.target.trackId));
+            });
         }
-        if (hovered) drawTooltip(*hovered, markers, camera, width, height);
-        drawSummary(markers, icons, static_cast<int>(height));
-        if (status) drawStatus(*status);
-        drawCredits(width, height);
+        // Overlays are laid out in unscaled pixels over a window shrunk by the
+        // UI scale, then drawn scaled up.
+        const float ui = uiScale();
+        drawScaledAround({0, 0}, [&] {
+            if (hovered) drawTooltip(*hovered, markers, camera, width / ui, height / ui);
+            drawSummary(markers, icons, static_cast<int>(height / ui));
+            if (status) drawStatus(*status);
+            drawCredits(width / ui, height / ui);
+        });
     }
 
     std::optional<StatusLine> status;
@@ -515,7 +523,7 @@ private:
     static Vector2 screenPosition(const MarkerPlacement& placement,
                                   const std::vector<TargetMotion::Marker>& markers, const Camera2D& camera) {
         const Vector2 position = GetWorldToScreen2D(toVector(markers[placement.index].position), camera);
-        return Vector2{position.x + static_cast<float>(placement.offsetPx), position.y};
+        return Vector2{position.x + static_cast<float>(placement.offsetPx) * uiScale(), position.y};
     }
 
     // The marker under the pointer, the nearest one where markers overlap.
@@ -527,7 +535,8 @@ private:
         for (const auto& placement : placements) {
             const Vector2 position = screenPosition(placement, markers, camera);
             const float distance = std::hypot(position.x - pointer.x, position.y - pointer.y);
-            const float radius = kTargetIconPx * static_cast<float>(placement.scale) * kHoverRadiusShare;
+            const float radius =
+                kTargetIconPx * uiScale() * static_cast<float>(placement.scale) * kHoverRadiusShare;
             if (distance <= radius && (!nearest || distance < nearestDistance)) {
                 nearest = &placement;
                 nearestDistance = distance;
@@ -567,7 +576,8 @@ private:
                              : MeasureTextEx(font_, subtitle.c_str(), kBadgeFontPx, kTextSpacingPx);
         const float panelWidth = std::max(titleExtent.x, subtitleExtent.x) + 2 * kTooltipPaddingPx;
         const float panelHeight = titleExtent.y + subtitleExtent.y + 2 * kTooltipPaddingPx;
-        const Vector2 icon = screenPosition(placement, markers, camera);
+        const Vector2 iconOnScreen = screenPosition(placement, markers, camera);
+        const Vector2 icon = {iconOnScreen.x / uiScale(), iconOnScreen.y / uiScale()};
         const float iconHalf = kTargetIconPx * static_cast<float>(placement.scale) / 2;
         float left = icon.x + iconHalf + kTooltipGapPx;
         if (left + panelWidth > width) left = icon.x - iconHalf - kTooltipGapPx - panelWidth;
@@ -599,13 +609,14 @@ private:
                 const TargetMotion::Marker& marker = markers[placement.index];
                 const Vector2 position = screenPosition(placement);
                 const auto opacity = static_cast<float>(marker.opacity);
-                const float size = kTargetIconPx * iconScale(placement);
+                const float size = kTargetIconPx * uiScale() * iconScale(placement);
                 // Without a heading the icon points north.
                 const auto heading = static_cast<float>(marker.target.headingDegrees.value_or(0));
                 const SnoutIcon& icon = icons.forTarget(marker.target);
                 if (shadow) {
-                    icon.draw({position.x + kShadowOffsetPx.x, position.y + kShadowOffsetPx.y}, size,
-                              heading, Fade(BLACK, kShadowOpacity * opacity));
+                    const Vector2 shadowAt = {position.x + kShadowOffsetPx.x * uiScale(),
+                                              position.y + kShadowOffsetPx.y * uiScale()};
+                    icon.draw(shadowAt, size, heading, Fade(BLACK, kShadowOpacity * opacity));
                 } else {
                     icon.draw(position, size, heading, Fade(WHITE, opacity));
                 }
@@ -613,8 +624,11 @@ private:
         }
         for (const auto& placement : placements) {
             if (placement.count > 1) {
-                drawCountBadge(screenPosition(placement), static_cast<float>(placement.scale),
-                               placement.count, static_cast<float>(markers[placement.index].opacity));
+                const Vector2 center = screenPosition(placement);
+                drawScaledAround(center, [&] {
+                    drawCountBadge(center, static_cast<float>(placement.scale), placement.count,
+                                   static_cast<float>(markers[placement.index].opacity));
+                });
             }
         }
     }
