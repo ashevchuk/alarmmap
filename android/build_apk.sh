@@ -14,7 +14,7 @@ sdk="${ANDROID_HOME:-$HOME/Android/Sdk}"
 ndk="$(find "$sdk/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
 build_tools="$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
 platform="$(find "$sdk/platforms" -mindepth 1 -maxdepth 1 -name 'android-[0-9]*' | sort -V | tail -n 1)"
-font=/usr/share/fonts/noto/NotoSans-Medium.ttf
+font="$(find /usr/share/fonts -name NotoSans-Medium.ttf | head -n 1)"
 min_sdk=26
 abi=arm64-v8a
 raylib_version=6.2
@@ -24,7 +24,7 @@ curl_version=8.22.0
 # Daniel Stenberg signs curl releases.
 curl_signing_key=27EDEAF22F3ABCEB50DB9A125CC908FDB71E12C2
 
-for path in "$ndk" "$build_tools" "$platform" "$font"; do
+for path in "$ndk" "$build_tools" "$platform" "${font:-NotoSans-Medium.ttf}"; do
     if [ ! -e "$path" ]; then
         echo "missing: $path" >&2
         exit 1
@@ -113,11 +113,16 @@ cp "$out/app-build/libalarmmap.so" "$stage/lib/$abi/"
 "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" "$stage/lib/$abi/libalarmmap.so"
 
 version="$(sed -n 's/^project(alarmmap VERSION \([0-9.]*\).*/\1/p' "$root/CMakeLists.txt")"
+# Android installs an APK over another only with an equal or higher code.
+version_code="$(echo "$version" | awk -F. '{ print $1 * 10000 + $2 * 100 + $3 }')"
+case "$version_code" in
+    ''|*[!0-9]*) echo "cannot derive a version code from '$version'" >&2; exit 1 ;;
+esac
 "$build_tools/aapt2" compile --dir "$stage/res" -o "$stage/res.zip"
 "$build_tools/aapt2" link -o "$stage/unaligned.apk" -I "$platform/android.jar" \
     --manifest "$root/android/AndroidManifest.xml" -A "$stage/assets" \
     --min-sdk-version "$min_sdk" --target-sdk-version "${platform##*-}" \
-    --version-code 1 --version-name "$version" "$stage/res.zip"
+    --version-code "$version_code" --version-name "$version" "$stage/res.zip"
 # Native libraries go in uncompressed so the system can map them from the APK.
 (cd "$stage" && zip -q -0 unaligned.apk "lib/$abi/libalarmmap.so")
 "$build_tools/zipalign" -f -P 16 4 "$stage/unaligned.apk" "$stage/aligned.apk"
