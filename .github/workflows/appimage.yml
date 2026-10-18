@@ -22,7 +22,7 @@ jobs:
       - name: Install build packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-12 libssl-dev zlib1g-dev fonts-noto-core \
+          sudo apt-get install -y g++-12 libssl-dev zlib1g-dev fonts-noto-extra \
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
           echo "CC=gcc-12" >> "$GITHUB_ENV"
           echo "CXX=g++-12" >> "$GITHUB_ENV"
@@ -56,9 +56,10 @@ jobs:
         run: |
           sudo ldconfig
           DESTDIR="$PWD/AppDir" cmake --install build --prefix /usr
-          install -Dm644 /usr/share/fonts/truetype/noto/NotoSans-Medium.ttf \
-            AppDir/usr/share/alarmmap/fonts/NotoSans-Medium.ttf
-          install -Dm644 /usr/share/doc/fonts-noto-core/copyright AppDir/usr/share/alarmmap/fonts/COPYRIGHT
+          font="$(find /usr/share/fonts -name NotoSans-Medium.ttf | head -n 1)"
+          test -n "$font"
+          install -Dm644 "$font" AppDir/usr/share/alarmmap/fonts/NotoSans-Medium.ttf
+          install -Dm644 /usr/share/doc/fonts-noto-extra/copyright AppDir/usr/share/alarmmap/fonts/COPYRIGHT
           install -Dm644 LICENSE AppDir/usr/share/doc/alarmmap/LICENSE
           curl -fsSLo linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           chmod +x linuxdeploy
