@@ -6,6 +6,8 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-18
+
 ### Fixed
 
 - Alerts no longer go stale for half a minute after an update the program
@@ -94,7 +96,8 @@ project follows [Semantic Versioning](https://semver.org/).
 - Window icon.
 - Installable, relocatable build and an x86-64 AppImage.
 
-[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/ashevchuk/alarmmap/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/ashevchuk/alarmmap/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ashevchuk/alarmmap/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ashevchuk/alarmmap/compare/v0.1.2...v0.2.0
