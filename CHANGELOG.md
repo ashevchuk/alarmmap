@@ -6,6 +6,8 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-18
+
 ### Changed
 
 - The Android app runs on Android 7.0 and newer instead of 8.0.
@@ -74,7 +76,8 @@ project follows [Semantic Versioning](https://semver.org/).
 - Window icon.
 - Installable, relocatable build and an x86-64 AppImage.
 
-[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/ashevchuk/alarmmap/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ashevchuk/alarmmap/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/ashevchuk/alarmmap/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ashevchuk/alarmmap/compare/v0.1.0...v0.1.1
