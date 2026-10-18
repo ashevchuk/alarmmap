@@ -88,8 +88,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build fonts-noto-extra
 
+      # Releases are signed with one key, so each APK installs over the last.
       - name: Build APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ALARMMAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            export ALARMMAP_KEYSTORE="$RUNNER_TEMP/release.jks"
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$ALARMMAP_KEYSTORE"
+          elif [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "::error::a release APK needs the ANDROID_KEYSTORE_BASE64 secret"
+            exit 1
+          fi
           android/build_apk.sh
           version="$(sed -n 's/^project(alarmmap VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
           test -n "$version"

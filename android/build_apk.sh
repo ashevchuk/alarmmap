@@ -4,7 +4,11 @@
 #
 # Needs ANDROID_HOME (default ~/Android/Sdk) with an NDK, build-tools and a
 # platform, gpg for the curl signature, and Noto Sans Medium. Output:
-# build-android/alarmmap.apk, signed with the debug key in
+# build-android/alarmmap.apk.
+#
+# With ALARMMAP_KEYSTORE (a PKCS12 file) and ALARMMAP_KEYSTORE_PASSWORD set,
+# the APK is signed with that keystore's "alarmmap" key, so it installs as an
+# update of earlier releases; otherwise with the debug key in
 # ~/.android/debug.keystore.
 set -eu
 
@@ -128,14 +132,20 @@ esac
 (cd "$stage" && zip -q -0 unaligned.apk "lib/$abi/libalarmmap.so")
 "$build_tools/zipalign" -f -P 16 4 "$stage/unaligned.apk" "$stage/aligned.apk"
 
-keystore="$HOME/.android/debug.keystore"
-if [ ! -f "$keystore" ]; then
-    mkdir -p "$(dirname "$keystore")"
-    keytool -genkeypair -keystore "$keystore" -storepass android -keypass android \
-        -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-        -dname "CN=Android Debug,O=Android,C=US"
+if [ -n "${ALARMMAP_KEYSTORE:-}" ]; then
+    # The password stays in the environment, out of every command line.
+    "$build_tools/apksigner" sign --ks "$ALARMMAP_KEYSTORE" --ks-key-alias alarmmap \
+        --ks-pass env:ALARMMAP_KEYSTORE_PASSWORD --out "$out/alarmmap.apk" "$stage/aligned.apk"
+else
+    keystore="$HOME/.android/debug.keystore"
+    if [ ! -f "$keystore" ]; then
+        mkdir -p "$(dirname "$keystore")"
+        keytool -genkeypair -keystore "$keystore" -storepass android -keypass android \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+    fi
+    "$build_tools/apksigner" sign --ks "$keystore" --ks-pass pass:android \
+        --out "$out/alarmmap.apk" "$stage/aligned.apk"
 fi
-"$build_tools/apksigner" sign --ks "$keystore" --ks-pass pass:android \
-    --out "$out/alarmmap.apk" "$stage/aligned.apk"
 "$build_tools/apksigner" verify "$out/alarmmap.apk"
 echo "$out/alarmmap.apk"
