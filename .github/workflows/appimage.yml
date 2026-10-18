@@ -1,0 +1,86 @@
+name: AppImage
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CURL_VERSION: 8.22.0
+  RAYLIB_VERSION: "6.2"
+
+jobs:
+  appimage:
+    # The oldest supported runner keeps the glibc requirement of the AppImage low.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-12 libssl-dev zlib1g-dev fonts-noto-core \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
+          echo "CC=gcc-12" >> "$GITHUB_ENV"
+          echo "CXX=g++-12" >> "$GITHUB_ENV"
+
+      # The distribution's curl is older than the 8.11 that WebSocket support needs.
+      - name: Build curl
+        run: |
+          curl -fsSL "https://curl.se/download/curl-${CURL_VERSION}.tar.xz" | tar -xJ
+          cmake -S "curl-${CURL_VERSION}" -B curl-build -DCMAKE_BUILD_TYPE=Release \
+            -DCURL_USE_OPENSSL=ON -DCURL_USE_LIBPSL=OFF -DCURL_USE_LIBSSH2=OFF -DUSE_LIBIDN2=OFF \
+            -DUSE_NGHTTP2=OFF -DCURL_ZSTD=OFF -DCURL_BROTLI=OFF -DBUILD_CURL_EXE=OFF \
+            -DBUILD_TESTING=OFF -DCURL_CA_BUNDLE=none -DCURL_CA_PATH=none -DCURL_CA_FALLBACK=ON
+          cmake --build curl-build -j "$(nproc)"
+          sudo cmake --install curl-build --prefix /usr/local
+
+      - name: Build raylib
+        run: |
+          git clone --depth 1 --branch "${RAYLIB_VERSION}" https://github.com/raysan5/raylib.git
+          cmake -S raylib -B raylib-build -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLES=OFF \
+            -DBUILD_SHARED_LIBS=OFF
+          cmake --build raylib-build -j "$(nproc)"
+          sudo cmake --install raylib-build --prefix /usr/local
+
+      - name: Build and test alarmmap
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/usr/local
+          cmake --build build -j "$(nproc)"
+          ctest --test-dir build --output-on-failure
+
+      - name: Package AppImage
+        run: |
+          sudo ldconfig
+          DESTDIR="$PWD/AppDir" cmake --install build --prefix /usr
+          install -Dm644 /usr/share/fonts/truetype/noto/NotoSans-Medium.ttf \
+            AppDir/usr/share/alarmmap/fonts/NotoSans-Medium.ttf
+          install -Dm644 /usr/share/doc/fonts-noto-core/copyright AppDir/usr/share/alarmmap/fonts/COPYRIGHT
+          install -Dm644 LICENSE AppDir/usr/share/doc/alarmmap/LICENSE
+          curl -fsSLo linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy
+          version="$(sed -n 's/^project(alarmmap VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
+          test -n "$version"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          APPIMAGE_EXTRACT_AND_RUN=1 LINUXDEPLOY_OUTPUT_VERSION="$version" ./linuxdeploy \
+            --appdir AppDir --custom-apprun packaging/AppRun \
+            --desktop-file AppDir/usr/share/applications/alarmmap.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/alarmmap.png \
+            --output appimage
+          ls -l ./*.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alarmmap-AppImage
+          path: "*.AppImage"
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "${GITHUB_REF_NAME}" = "v${VERSION}"
+          gh release create "${GITHUB_REF_NAME}" ./*.AppImage --title "alarmmap ${VERSION}" --generate-notes
