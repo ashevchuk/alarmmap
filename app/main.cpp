@@ -22,6 +22,7 @@
 #include "marker_layout.hpp"
 #include "projection.hpp"
 #include "region_geometry.hpp"
+#include "render_util.hpp"
 #include "snout_icon.hpp"
 #include "target_effects.hpp"
 #include "target_kind.hpp"
@@ -101,6 +102,10 @@ constexpr float kPanelFontPx = 15;
 constexpr float kPanelIconGapPx = 10;
 constexpr float kPanelNumberGapPx = 20;
 constexpr float kTargetIconPx = 34;
+// Markers start at this share of their size on the whole-country view and
+// reach full size at kFullMarkerZoom, growing with the logarithm of zoom.
+constexpr float kMarkerShareAtMinZoom = 0.7f;
+constexpr double kFullMarkerZoom = 4;
 constexpr Vector2 kShadowOffsetPx = {3, 4};
 // A region whose alert has just started pulses for a while, fading out.
 constexpr double kPulseWindowSeconds = 180;
@@ -356,7 +361,11 @@ public:
     }
 
     // Offscreen work that switches render targets; runs before the frame.
-    void prepare(const MapView& view, double now) { mapLayer_.prepare(view, now); }
+    void prepare(const MapView& view, double now) {
+        const double growth = std::clamp(std::log2(view.zoom()) / std::log2(kFullMarkerZoom), 0.0, 1.0);
+        markerScale_ = static_cast<float>(kMarkerShareAtMinZoom + (1 - kMarkerShareAtMinZoom) * growth);
+        mapLayer_.prepare(view, now);
+    }
 
     // `pointer` is the mouse position while it hovers over the map.
     void draw(const MapView& view, const Camera2D& camera, const HeatRenderer& heat,
@@ -372,14 +381,18 @@ public:
         std::erase_if(markers, [&](const TargetMotion::Marker& marker) {
             return !visibleTracks_.contains(marker.target.trackId);
         });
-        const std::vector<MarkerPlacement> placements = layoutMarkers(markers, camera.zoom);
+        // The layout works in unscaled pixels; screenPosition() scales its offsets.
+        const std::vector<MarkerPlacement> placements = layoutMarkers(markers, camera.zoom / markerScale_);
         std::vector<TargetMotion::Explosion> explosions = motion_.explosionsAt(now);
         std::erase_if(explosions, [&](const TargetMotion::Explosion& explosion) {
             return !visibleTracks_.contains(explosion.target.trackId);
         });
         for (const auto& explosion : explosions) {
-            drawScorch(GetWorldToScreen2D(toVector(explosion.position), camera), explosion.age,
-                       TargetMotion::kAftermathSeconds, effectSeed(explosion.target.trackId));
+            const Vector2 center = GetWorldToScreen2D(toVector(explosion.position), camera);
+            drawScaledAround(center, markerScale_, [&] {
+                drawScorch(center, explosion.age, TargetMotion::kAftermathSeconds,
+                           effectSeed(explosion.target.trackId));
+            });
         }
         const MarkerPlacement* hovered =
             pointer ? hoveredPlacement(placements, markers, camera, *pointer) : nullptr;
@@ -387,11 +400,15 @@ public:
         drawTargets(markers, placements, camera, icons);
         for (const auto& placement : placements) {
             const TargetMotion::Marker& marker = markers[placement.index];
-            drawTeleport(screenPosition(placement, markers, camera), marker.age, effectSeed(marker.target.trackId));
+            const Vector2 center = screenPosition(placement, markers, camera);
+            drawScaledAround(center, markerScale_,
+                             [&] { drawTeleport(center, marker.age, effectSeed(marker.target.trackId)); });
         }
         for (const auto& explosion : explosions) {
-            drawExplosion(GetWorldToScreen2D(toVector(explosion.position), camera), explosion.age,
-                          effectSeed(explosion.target.trackId));
+            const Vector2 center = GetWorldToScreen2D(toVector(explosion.position), camera);
+            drawScaledAround(center, markerScale_, [&] {
+                drawExplosion(center, explosion.age, effectSeed(explosion.target.trackId));
+            });
         }
         if (hovered) drawTooltip(*hovered, markers, camera, width, height);
         drawSummary(markers, icons, static_cast<int>(height));
@@ -479,22 +496,23 @@ private:
         }
     }
 
-    static Vector2 screenPosition(const MarkerPlacement& placement,
-                                  const std::vector<TargetMotion::Marker>& markers, const Camera2D& camera) {
+    Vector2 screenPosition(const MarkerPlacement& placement, const std::vector<TargetMotion::Marker>& markers,
+                           const Camera2D& camera) const {
         const Vector2 position = GetWorldToScreen2D(toVector(markers[placement.index].position), camera);
-        return Vector2{position.x + static_cast<float>(placement.offsetPx), position.y};
+        return Vector2{position.x + static_cast<float>(placement.offsetPx) * markerScale_, position.y};
     }
 
     // The marker under the pointer, the nearest one where markers overlap.
-    static const MarkerPlacement* hoveredPlacement(const std::vector<MarkerPlacement>& placements,
-                                                   const std::vector<TargetMotion::Marker>& markers,
-                                                   const Camera2D& camera, Vector2 pointer) {
+    const MarkerPlacement* hoveredPlacement(const std::vector<MarkerPlacement>& placements,
+                                            const std::vector<TargetMotion::Marker>& markers,
+                                            const Camera2D& camera, Vector2 pointer) const {
         const MarkerPlacement* nearest = nullptr;
         float nearestDistance = 0;
         for (const auto& placement : placements) {
             const Vector2 position = screenPosition(placement, markers, camera);
             const float distance = std::hypot(position.x - pointer.x, position.y - pointer.y);
-            const float radius = kTargetIconPx * static_cast<float>(placement.scale) * kHoverRadiusShare;
+            const float radius =
+                kTargetIconPx * markerScale_ * static_cast<float>(placement.scale) * kHoverRadiusShare;
             if (distance <= radius && (!nearest || distance < nearestDistance)) {
                 nearest = &placement;
                 nearestDistance = distance;
@@ -535,7 +553,7 @@ private:
         const float panelWidth = std::max(titleExtent.x, subtitleExtent.x) + 2 * kTooltipPaddingPx;
         const float panelHeight = titleExtent.y + subtitleExtent.y + 2 * kTooltipPaddingPx;
         const Vector2 icon = screenPosition(placement, markers, camera);
-        const float iconHalf = kTargetIconPx * static_cast<float>(placement.scale) / 2;
+        const float iconHalf = kTargetIconPx * markerScale_ * static_cast<float>(placement.scale) / 2;
         float left = icon.x + iconHalf + kTooltipGapPx;
         if (left + panelWidth > width) left = icon.x - iconHalf - kTooltipGapPx - panelWidth;
         const float top = std::clamp(icon.y - panelHeight / 2, 0.0f, std::max(0.0f, height - panelHeight));
@@ -555,7 +573,7 @@ private:
                      const std::vector<MarkerPlacement>& placements, const Camera2D& camera,
                      const TargetIcons& icons) const {
         const auto screenPosition = [&](const MarkerPlacement& placement) {
-            return Scene::screenPosition(placement, markers, camera);
+            return this->screenPosition(placement, markers, camera);
         };
         const auto iconScale = [&](const MarkerPlacement& placement) {
             return static_cast<float>(placement.scale) * teleportIconScale(markers[placement.index].age);
@@ -566,13 +584,14 @@ private:
                 const TargetMotion::Marker& marker = markers[placement.index];
                 const Vector2 position = screenPosition(placement);
                 const auto opacity = static_cast<float>(marker.opacity);
-                const float size = kTargetIconPx * iconScale(placement);
+                const float size = kTargetIconPx * markerScale_ * iconScale(placement);
                 // Without a heading the icon points north.
                 const auto heading = static_cast<float>(marker.target.headingDegrees.value_or(0));
                 const SnoutIcon& icon = icons.forTarget(marker.target);
                 if (shadow) {
-                    icon.draw({position.x + kShadowOffsetPx.x, position.y + kShadowOffsetPx.y}, size,
-                              heading, Fade(BLACK, kShadowOpacity * opacity));
+                    const Vector2 shadowAt = {position.x + kShadowOffsetPx.x * markerScale_,
+                                              position.y + kShadowOffsetPx.y * markerScale_};
+                    icon.draw(shadowAt, size, heading, Fade(BLACK, kShadowOpacity * opacity));
                 } else {
                     icon.draw(position, size, heading, Fade(WHITE, opacity));
                 }
@@ -580,8 +599,11 @@ private:
         }
         for (const auto& placement : placements) {
             if (placement.count > 1) {
-                drawCountBadge(screenPosition(placement), static_cast<float>(placement.scale),
-                               placement.count, static_cast<float>(markers[placement.index].opacity));
+                const Vector2 center = screenPosition(placement);
+                drawScaledAround(center, markerScale_, [&] {
+                    drawCountBadge(center, static_cast<float>(placement.scale), placement.count,
+                                   static_cast<float>(markers[placement.index].opacity));
+                });
             }
         }
     }
@@ -610,6 +632,8 @@ private:
     std::optional<RegionAlerts> alerts_;
     std::optional<TargetSnapshot> targets_;
     double targetsReceivedAt_ = 0;
+    // Size multiplier of target markers for the current zoom.
+    float markerScale_ = 1;
     std::vector<HeatCandidate> heatCandidates_;
     std::unordered_set<std::string> visibleTracks_;
     TargetMotion motion_;
