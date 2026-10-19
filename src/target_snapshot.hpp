@@ -103,6 +103,9 @@ struct TargetSnapshot {
     double fogSeconds = 0;
     double snapshotTtlSeconds = 0;
     std::optional<Movement> movement;
+    // The site has stopped publishing targets: the snapshot is empty on
+    // purpose, not because no targets are in the air.
+    bool targetsPaused = false;
     // Entries (targets, heat cells, track IDs) and header fields that could
     // not be read: the entries were left out, the fields took defaults.
     int skippedEntries = 0;

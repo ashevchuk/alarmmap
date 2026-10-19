@@ -243,6 +243,8 @@ TargetSnapshot decodeCompact(const json& packet) {
     snapshot.extrapolationUpdatedAtMs = readOr(skipped, std::int64_t{0}, [&] { return decoder.timestamp(fields[2]); });
     snapshot.fogSeconds = readOr(skipped, kDefaultFogSeconds, [&] { return fields[3].get<double>(); });
     snapshot.snapshotTtlSeconds = readOr(skipped, 0.0, [&] { return fields[4].get<double>(); });
+    // The site pauses targets only on a numeric p of exactly 0.
+    snapshot.targetsPaused = field(packet, "p") == 0;
 
     const json& movement = fields[11];
     if (!movement.is_null()) {
@@ -342,6 +344,7 @@ TargetSnapshot decodeExpanded(const json& object) {
         valueOr<std::int64_t>(field(object, "extrapolationUpdatedAt"), 0);
     snapshot.fogSeconds = valueOr(field(object, "fog"), 0.0);
     snapshot.snapshotTtlSeconds = valueOr(field(object, "snapshotTtl"), 0.0);
+    snapshot.targetsPaused = field(object, "publicTargetsEnabled") == false;
 
     const json& movement = field(object, "movement");
     if (movement.is_object()) {

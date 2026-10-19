@@ -121,6 +121,8 @@ constexpr float kShadowOpacity = 0.5f;
 constexpr Color kStatusColor = {176, 184, 198, 255};
 constexpr Color kLiveDot = {90, 210, 120, 255};
 constexpr Color kConnectingDot = {240, 180, 60, 255};
+// Connected, but the targets shown are not current.
+constexpr Color kDegradedDot = {240, 180, 60, 255};
 constexpr Color kOfflineDot = {235, 80, 70, 255};
 constexpr Color kPanelBackground = {12, 15, 20, 200};
 constexpr Color kPanelBorder = {70, 80, 96, 160};
@@ -905,6 +907,9 @@ enum class Connection { Connecting, Live, Offline };
 
 struct LiveData {
     std::optional<TargetSnapshot> targets;
+    // Local clock (nowSeconds), so that a skewed system clock cannot make
+    // fresh data look stale.
+    double targetsReceivedAt = 0;
     std::optional<RegionAlerts> alerts;
     std::optional<std::int64_t> alertsActionIndex;
     Connection connection = Connection::Connecting;
@@ -923,10 +928,12 @@ public:
             if (snapshot->skippedEntries > 0) {
                 std::cout << "feed: targets read in part: skipped entries=" << snapshot->skippedEntries << '\n';
             }
+            reportUnknownIcons(*snapshot);
             std::lock_guard lock(mutex_);
             // The REST snapshot and a queued publication can arrive out of order.
             if (data_.targets && snapshot->serverTimeMs < data_.targets->serverTimeMs) return;
             data_.targets = std::move(snapshot);
+            data_.targetsReceivedAt = nowSeconds();
             ++data_.version;
         } else if (channel == kAlertsChannel) {
             AlertUpdate update = readAlertUpdate(payload);
@@ -978,9 +985,24 @@ public:
     }
 
 private:
+    // Feed thread. Once per icon name, so that a new kind of target shows up
+    // in the log without flooding it.
+    void reportUnknownIcons(const TargetSnapshot& snapshot) {
+        for (const Target& target : snapshot.targets) {
+            if (!isIdentified(target.iconName, target.detectedType) ||
+                targetKind(target.iconName, target.detectedType) != TargetKind::Unknown ||
+                !reportedIcons_.insert(target.iconName).second) {
+                continue;
+            }
+            std::cout << "feed: unknown target icon " << target.iconName << " (detected type "
+                      << target.detectedType << ")\n";
+        }
+    }
+
     mutable std::mutex mutex_;
     LiveData data_;
     TargetSnapshotReader reader_;  // used on the feed thread only
+    std::unordered_set<std::string> reportedIcons_;  // used on the feed thread only
 };
 
 // Runs the feed on its own thread and always stops it, even during unwinding.
@@ -1053,11 +1075,17 @@ StatusLine describeLiveStatus(const LiveData& data, double now) {
             break;
         }
     }
-    if (data.targets) {
+    const bool live = data.connection == Connection::Live;
+    if (data.targets && data.targets->targetsPaused) {
+        if (live) line = {"показ цілей призупинено сайтом", kDegradedDot};
+        else line.text += " · показ цілей призупинено сайтом";
+    } else if (data.targets) {
         const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                std::chrono::system_clock::now().time_since_epoch())
                                .count();
         const auto ageSeconds = std::max<std::int64_t>(0, (nowMs - data.targets->serverTimeMs) / 1000);
+        const double ttl = data.targets->snapshotTtlSeconds;
+        if (live && ttl > 0 && now - data.targetsReceivedAt > ttl) line = {"дані застаріли", kDegradedDot};
         line.text += " · цілей: " + std::to_string(data.targets->targets.size()) + " · оновлено " +
                      std::to_string(ageSeconds) + " с тому";
     }

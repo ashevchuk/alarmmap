@@ -13,7 +13,8 @@ enum class TargetKind {
     GuidedBomb,
     Helicopter,
     Ground,
-    // Not identified by the source; the site draws these as Shahed drones.
+    // Not identified by the source, or identified with an icon this app does
+    // not know.
     Unknown,
 };
 
@@ -23,10 +24,12 @@ inline constexpr TargetKind kAllTargetKinds[] = {
     TargetKind::Helicopter,    TargetKind::Ground,         TargetKind::Unknown,
 };
 
+// Like the site, a target counts as identified only with a detected type and
+// an icon name of the form ic_[a-z0-9_]+.
+bool isIdentified(std::string_view iconName, std::string_view detectedType);
+
 // Kind of a target by the icon name and detected type the site assigns to
-// it. Like the site, a target counts as identified only with a detected type
-// and an icon name of the form ic_[a-z0-9_]+. Identified names without a
-// match are drones, drawn by the site with its Shahed icon.
+// it. Unidentified targets and icon names without a match are Unknown.
 TargetKind targetKind(std::string_view iconName, std::string_view detectedType);
 
 }  // namespace alarmmap

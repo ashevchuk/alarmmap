@@ -6,6 +6,19 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The status line turns yellow when the site pauses its target feed, saying
+  so instead of reporting zero targets, and when no target update has arrived
+  for longer than the site's snapshot lifetime. On Android only the dot
+  changes colour.
+
+### Fixed
+
+- Banderol targets show as cruise missiles instead of attack drones.
+- Targets with an icon the program does not know count as unknown instead of
+  attack drones; their icon names are written to the log.
+
 ## [0.2.4] - 2026-10-18
 
 ### Added

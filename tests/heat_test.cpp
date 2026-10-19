@@ -343,9 +343,9 @@ void testTargetKinds() {
         {"ic_asterix_plane_stroke", TargetKind::Plane},
         {"ic_asterix_plane_masked", TargetKind::Plane},
         {"ic_lancet", TargetKind::Drone},
-        // Identified targets with icons this table does not know are drones.
-        {"ic_air_threat_combined_white", TargetKind::Drone},
-        {"ic_not_known_yet", TargetKind::Drone},
+        // Identified targets with icons this table does not know are unknown.
+        {"ic_air_threat_combined_white", TargetKind::Unknown},
+        {"ic_not_known_yet", TargetKind::Unknown},
     };
     for (const auto& [iconName, kind] : expected) {
         check(targetKind(iconName, "Detected") == kind, std::string("kind of '") + iconName + "'");
