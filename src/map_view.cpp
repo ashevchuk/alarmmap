@@ -4,15 +4,22 @@
 
 namespace alarmmap {
 
-void MapView::setViewport(double width, double height) {
+void MapView::setViewport(double width, double height, double pixelsPerDip) {
     width_ = std::max(1.0, width);
     height_ = std::max(1.0, height);
+    pixelsPerDip_ = pixelsPerDip;
     clamp();
 }
 
-double MapView::pixelsPerUnit() const {
+double MapView::fitPixelsPerUnit() const {
     const double fit = std::min((width_ - 2 * kMarginPx) / kMapWidth, (height_ - 2 * kMarginPx) / kMapHeight);
-    return std::max(0.01, fit) * zoom_;
+    return std::max(0.01, fit);
+}
+
+double MapView::pixelsPerUnit() const { return fitPixelsPerUnit() * zoom_; }
+
+double MapView::maxZoom() const {
+    return std::max(kMinZoom, scaleForTileZoom(kMaxTileZoom) * pixelsPerDip_ / fitPixelsPerUnit());
 }
 
 MapPoint MapView::screenToMap(MapPoint screen) const {
@@ -27,7 +34,7 @@ MapPoint MapView::mapToScreen(MapPoint map) const {
 
 void MapView::zoomAt(MapPoint screenAnchor, double factor) {
     const MapPoint anchor = screenToMap(screenAnchor);
-    zoom_ = std::clamp(zoom_ * factor, kMinZoom, kMaxZoom);
+    zoom_ = std::clamp(zoom_ * factor, kMinZoom, maxZoom());
     const double scale = pixelsPerUnit();
     center_ = {anchor.x - (screenAnchor.x - width_ / 2) / scale,
                anchor.y - (screenAnchor.y - height_ / 2) / scale};
@@ -46,7 +53,7 @@ void MapView::reset() {
 }
 
 void MapView::clamp() {
-    zoom_ = std::clamp(zoom_, kMinZoom, kMaxZoom);
+    zoom_ = std::clamp(zoom_, kMinZoom, maxZoom());
     // The centre's freedom grows from none at the minimum zoom to the whole
     // map plane at kFreePanZoom, so zooming out glides back to the middle.
     const double freedom = std::clamp((zoom_ - kMinZoom) / (kFreePanZoom - kMinZoom), 0.0, 1.0);

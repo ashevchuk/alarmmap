@@ -101,6 +101,7 @@ void testProjectionMatchesSite() {
     const MapPoint tileStart = worldToMap(0, 0), tileEnd = worldToMap(1.0 / 64, 0);
     const double pixelsPerUnit = 256 / (tileEnd.x - tileStart.x);
     check(near(tileZoomForScale(pixelsPerUnit), 6, 1e-9), "tile zoom for scale");
+    check(near(scaleForTileZoom(6), pixelsPerUnit, 1e-9), "scale for tile zoom");
 }
 
 void testSimplifyRing() {
@@ -373,7 +374,9 @@ void testMapView() {
           "centre cannot leave the map plane");
 
     view.zoomAt(screen, 1e6);
-    check(near(view.zoom(), MapView::kMaxZoom, 1e-12), "zoom capped");
+    check(near(view.zoom(), view.maxZoom(), 1e-12), "zoom capped");
+    check(near(tileZoomForScale(view.pixelsPerUnit()), MapView::kMaxTileZoom, 1e-9),
+          "zoom capped at the maximum tile zoom");
     view.zoomAt(screen, 1e-6);
     check(near(view.zoom(), MapView::kMinZoom, 1e-12), "zoom floored");
 

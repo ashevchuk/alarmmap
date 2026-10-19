@@ -26,5 +26,7 @@ MapPoint mapToWorld(MapPoint point);
 
 // Zoom level of 256-pixel web map tiles that matches the given scale.
 double tileZoomForScale(double pixelsPerMapUnit);
+// Inverse of tileZoomForScale.
+double scaleForTileZoom(double tileZoom);
 
 }  // namespace alarmmap

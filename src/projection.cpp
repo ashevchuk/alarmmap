@@ -71,4 +71,8 @@ double tileZoomForScale(double pixelsPerMapUnit) {
     return std::log2(pixelsPerWorld / kTilePixels);
 }
 
+double scaleForTileZoom(double tileZoom) {
+    return kTilePixels * std::exp2(tileZoom) / (2 * std::numbers::pi * kFit.scale);
+}
+
 }  // namespace alarmmap

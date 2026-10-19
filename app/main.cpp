@@ -1313,7 +1313,7 @@ int run(const Options& options) {
 #endif
             while (!WindowShouldClose()) {
                 const double now = nowSeconds();
-                view.setViewport(GetScreenWidth(), GetScreenHeight());
+                view.setViewport(GetScreenWidth(), GetScreenHeight(), uiScale());
                 const MapView before = view;
                 handleKeys(view);
 #ifdef __ANDROID__
