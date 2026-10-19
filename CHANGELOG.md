@@ -6,6 +6,13 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-10-20
+
+### Fixed
+
+- The map zooms in as far as the original map does, at every window size.
+  The limit used to depend on the window and stopped one level short.
+
 ## [0.2.5] - 2026-10-19
 
 ### Added
@@ -117,7 +124,8 @@ project follows [Semantic Versioning](https://semver.org/).
 - Window icon.
 - Installable, relocatable build and an x86-64 AppImage.
 
-[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/ashevchuk/alarmmap/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/ashevchuk/alarmmap/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/ashevchuk/alarmmap/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/ashevchuk/alarmmap/compare/v0.2.2...v0.2.3
