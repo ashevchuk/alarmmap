@@ -6,6 +6,8 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-10-19
+
 ### Added
 
 - The status line turns yellow when the site pauses its target feed, saying
@@ -115,7 +117,8 @@ project follows [Semantic Versioning](https://semver.org/).
 - Window icon.
 - Installable, relocatable build and an x86-64 AppImage.
 
-[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/ashevchuk/alarmmap/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/ashevchuk/alarmmap/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/ashevchuk/alarmmap/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/ashevchuk/alarmmap/compare/v0.2.1...v0.2.2
