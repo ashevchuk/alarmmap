@@ -410,7 +410,7 @@ public:
         if (alertsChanged) {
             alerts_ = alerts;
             if (alerts_) airFilter_.setAirRegions(alerts_->air);
-            mapLayer_.setAlertRegions(alerts_ ? &alerts_->any : nullptr);
+            mapLayer_.setAlertRegions(alerts_ ? &alerts_->any : nullptr, alerts_ ? &alerts_->yellow : nullptr);
         }
         if (targetsChanged) {
             targets_ = targets;

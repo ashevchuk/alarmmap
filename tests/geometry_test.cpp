@@ -453,6 +453,19 @@ void testAlertRegions() {
     check(alerts.startedAtMs.size() == 1 && alerts.startedAtMs.at("9") == 1792271100500LL,
           "latest readable start per region");
 
+    const auto airAlert = [](const std::string& id, const json& levels) {
+        return json{{"regionId", id},
+                    {"activeAlerts", json::array({{{"type", "AIR"}, {"activeAlertLevels", levels}}})}};
+    };
+    const RegionAlerts levelled = activeRegionAlerts(json{
+        {"alerts", json::array({airAlert("1", json::array({{{"alertLevel", "Yellow"}}})),
+                                airAlert("2", json::array({{{"alertLevel", "Yellow"}}, {{"alertLevel", " red "}}})),
+                                airAlert("3", json::array({{{"alertLevel", "Red"}}})),
+                                airAlert("4", json::array()),
+                                {{"regionId", "5"}, {"activeAlerts", json::array({{{"type", "ARTILLERY"}}})}}})}});
+    check(levelled.any == std::set<std::string>{"1", "2", "3", "4", "5"}, "yellow regions still count as alerts");
+    check(levelled.yellow == std::set<std::string>{"1", "4"}, "an air alert without a red level is yellow");
+
     bool threw = false;
     try {
         activeRegionAlerts(json{{"other", 1}});

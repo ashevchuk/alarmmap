@@ -96,7 +96,7 @@ constexpr double kHromadaBordersMinZoom = 4;
 // Largest simplification error, in screen pixels, the coarse shapes may show.
 constexpr double kMaxSimplificationPx = 0.6;
 constexpr float kCountryHaloRadiusPx = 26;
-constexpr float kAlertGlowRadiusPx = 10;
+constexpr float kAlertGlowRadiusPx = 7;
 constexpr float kLabelFontPx = 13;
 constexpr float kLabelSpacingPx = 0.4f;
 // A dark outline around every glyph keeps labels readable over roads,
@@ -134,6 +134,7 @@ constexpr float kVignetteClearShare = 0.35f;
 
 constexpr Color kLandBase = {34, 38, 46, 255};
 constexpr Color kAlertFill = {150, 30, 40, 105};
+constexpr Color kYellowAlertFill = {190, 140, 10, 70};
 // Basemap palette, indexed like kAllBasemapFills and kAllBasemapLines.
 constexpr Color kFillColors[] = {
     {16, 26, 40, 255},  // water
@@ -179,6 +180,8 @@ constexpr Vector4 kNoGlow = {0, 0, 0, 0};
 constexpr Vector4 kCountryHalo = {80 / 255.0f, 120 / 255.0f, 190 / 255.0f, 0.45f};
 constexpr Vector4 kAlertInnerGlow = {1.0f, 80 / 255.0f, 70 / 255.0f, 0.9f};
 constexpr Vector4 kAlertOuterGlow = {1.0f, 60 / 255.0f, 50 / 255.0f, 0.4f};
+constexpr Vector4 kYellowInnerGlow = {1.0f, 200 / 255.0f, 40 / 255.0f, 0.55f};
+constexpr Vector4 kYellowOuterGlow = {1.0f, 180 / 255.0f, 30 / 255.0f, 0.22f};
 
 Vector2 toVector(const MapPoint& point) {
     return {static_cast<float>(point.x), static_cast<float>(point.y)};
@@ -288,7 +291,8 @@ MapLayer::Selection MapLayer::select(const alarmmap::MapView& view, double halfW
 MapLayer::~MapLayer() {
     if (width_ > 0) {
         for (const RenderTexture2D& target :
-             {cache_, country_.sharp, country_.blurred, alerts_.sharp, alerts_.blurred}) {
+             {cache_, country_.sharp, country_.blurred, redAlerts_.sharp, redAlerts_.blurred,
+              yellowAlerts_.sharp, yellowAlerts_.blurred}) {
             UnloadRenderTexture(target);
         }
     }
@@ -297,17 +301,25 @@ MapLayer::~MapLayer() {
     UnloadShader(dimShader_);
 }
 
-void MapLayer::setAlertRegions(const std::set<std::string>* regionIds) {
-    std::set<std::string> next = regionIds ? *regionIds : std::set<std::string>{};
-    if (next == alertRegionIds_) return;
-    alertRegionIds_ = std::move(next);
+void MapLayer::setAlertRegions(const std::set<std::string>* regionIds, const std::set<std::string>* yellow) {
+    std::set<std::string> nextYellow;
+    std::set<std::string> nextRed;
+    if (regionIds) {
+        for (const std::string& id : *regionIds) {
+            (yellow && yellow->contains(id) ? nextYellow : nextRed).insert(id);
+        }
+    }
+    if (nextRed == redRegionIds_ && nextYellow == yellowRegionIds_) return;
+    redRegionIds_ = std::move(nextRed);
+    yellowRegionIds_ = std::move(nextYellow);
     dirty_ = true;
 }
 
 void MapLayer::resize(int width, int height) {
     if (width_ > 0) {
         for (const RenderTexture2D& target :
-             {cache_, country_.sharp, country_.blurred, alerts_.sharp, alerts_.blurred}) {
+             {cache_, country_.sharp, country_.blurred, redAlerts_.sharp, redAlerts_.blurred,
+              yellowAlerts_.sharp, yellowAlerts_.blurred}) {
             UnloadRenderTexture(target);
         }
     }
@@ -319,13 +331,14 @@ void MapLayer::resize(int width, int height) {
     const int maskWidth = static_cast<int>(areaWidth * kMaskScale);
     const int maskHeight = static_cast<int>(areaHeight * kMaskScale);
     country_ = {loadLinearTarget(maskWidth, maskHeight), loadLinearTarget(maskWidth, maskHeight)};
-    alerts_ = {loadLinearTarget(maskWidth, maskHeight), loadLinearTarget(maskWidth, maskHeight)};
+    redAlerts_ = {loadLinearTarget(maskWidth, maskHeight), loadLinearTarget(maskWidth, maskHeight)};
+    yellowAlerts_ = {loadLinearTarget(maskWidth, maskHeight), loadLinearTarget(maskWidth, maskHeight)};
     width_ = width;
     height_ = height;
     dirty_ = true;
 }
 
-void MapLayer::drawFills(const Selection& selection, bool alertsOnly, Color color) const {
+void MapLayer::drawFills(const Selection& selection, const std::set<std::string>* regions, Color color) const {
     const std::vector<RegionShape>& shapes = *selection.level->shapes;
     geometry_.begin(color);
     // Coarser regions first, so a district alert stays visible over its oblast.
@@ -333,7 +346,7 @@ void MapLayer::drawFills(const Selection& selection, bool alertsOnly, Color colo
         for (size_t i = 0; i < shapes.size(); ++i) {
             const RegionShape& shape = shapes[i];
             if (shape.rank != rank || !selection.covers(shape)) continue;
-            if (alertsOnly ? alertRegionIds_.contains(shape.id) : rank == kOblastRank) {
+            if (regions ? regions->contains(shape.id) : rank == kOblastRank) {
                 geometry_.draw(selection.level->fills, i);
             }
         }
@@ -341,12 +354,28 @@ void MapLayer::drawFills(const Selection& selection, bool alertsOnly, Color colo
     geometry_.end();
 }
 
+void MapLayer::drawAlertFills(const Selection& selection) const {
+    const std::vector<RegionShape>& shapes = *selection.level->shapes;
+    // Coarser regions first, so a district alert stays visible over its oblast.
+    for (int rank = kOblastRank; rank <= kHromadaRank; ++rank) {
+        for (size_t i = 0; i < shapes.size(); ++i) {
+            const RegionShape& shape = shapes[i];
+            if (shape.rank != rank || !selection.covers(shape)) continue;
+            const bool yellow = yellowRegionIds_.contains(shape.id);
+            if (!yellow && !redRegionIds_.contains(shape.id)) continue;
+            geometry_.begin(yellow ? kYellowAlertFill : kAlertFill);
+            geometry_.draw(selection.level->fills, i);
+            geometry_.end();
+        }
+    }
+}
+
 void MapLayer::renderMask(const GlowMasks& masks, const Selection& selection, const Camera2D& camera,
-                          bool alertsOnly, float blurRadius) {
+                          const std::set<std::string>* regions, float blurRadius) {
     BeginTextureMode(masks.sharp);
     ClearBackground(BLANK);
     BeginMode2D(camera);
-    drawFills(selection, alertsOnly, kMaskColor);
+    drawFills(selection, regions, kMaskColor);
     EndMode2D();
     EndTextureMode();
     // Copying the sharp mask is far cheaper than filling the regions again.
@@ -651,11 +680,12 @@ void MapLayer::render(const alarmmap::MapView& view) {
     const auto maskHeight = static_cast<float>(country_.sharp.texture.height);
     const Camera2D maskCamera = viewCamera(view, maskWidth, maskHeight, kMaskScale);
     const Selection selection = select(view, maskWidth / kMaskScale / 2, maskHeight / kMaskScale / 2);
-    renderMask(country_, selection, maskCamera, false, kCountryHaloRadiusPx * uiScale() * kMaskScale);
-    const bool hasAlerts = !alertRegionIds_.empty();
-    if (hasAlerts) {
-        renderMask(alerts_, selection, maskCamera, true, kAlertGlowRadiusPx * uiScale() * kMaskScale);
-    }
+    renderMask(country_, selection, maskCamera, nullptr, kCountryHaloRadiusPx * uiScale() * kMaskScale);
+    const bool hasRed = !redRegionIds_.empty();
+    const bool hasYellow = !yellowRegionIds_.empty();
+    const float alertGlowRadius = kAlertGlowRadiusPx * uiScale() * kMaskScale;
+    if (hasRed) renderMask(redAlerts_, selection, maskCamera, &redRegionIds_, alertGlowRadius);
+    if (hasYellow) renderMask(yellowAlerts_, selection, maskCamera, &yellowRegionIds_, alertGlowRadius);
 
     const Camera2D camera = viewCamera(view, static_cast<float>(cache_.texture.width),
                                        static_cast<float>(cache_.texture.height), kSupersampling);
@@ -669,9 +699,10 @@ void MapLayer::render(const alarmmap::MapView& view) {
     drawOutsideDimming();
     drawGlow(country_, kNoGlow, kCountryHalo);
     BeginMode2D(camera);
-    drawFills(selection, true, kAlertFill);
+    drawAlertFills(selection);
     EndMode2D();
-    if (hasAlerts) drawGlow(alerts_, kAlertInnerGlow, kAlertOuterGlow);
+    if (hasRed) drawGlow(redAlerts_, kAlertInnerGlow, kAlertOuterGlow);
+    if (hasYellow) drawGlow(yellowAlerts_, kYellowInnerGlow, kYellowOuterGlow);
     BeginMode2D(camera);
     drawBorders(selection, camera, kSupersampling * uiScale());
     EndMode2D();

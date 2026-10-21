@@ -32,6 +32,19 @@ bool isAirAlert(const json& alert) {
     return type.is_string() && trimmedUpper(type.get<std::string>()) == "AIR";
 }
 
+// The site marks a region yellow when its first air alert has no red level
+// (mapCore.js SetHighlight).
+bool isYellowAirAlert(const json& active) {
+    const auto first = std::find_if(active.begin(), active.end(), isAirAlert);
+    if (first == active.end()) return false;
+    const json levels = first->value("activeAlertLevels", json::array());
+    if (!levels.is_array()) return true;
+    return std::none_of(levels.begin(), levels.end(), [](const json& level) {
+        const json& name = level.is_object() && level.contains("alertLevel") ? level["alertLevel"] : json();
+        return name.is_string() && trimmedUpper(name.get<std::string>()) == "RED";
+    });
+}
+
 std::optional<int> readNumber(std::string_view text, size_t offset, size_t length) {
     int value = 0;
     const char* first = text.data() + offset;
@@ -138,6 +151,7 @@ RegionAlerts readRegions(const json& payload, int& skipped) {
             const bool air = std::any_of(active.begin(), active.end(), isAirAlert);
             alerts.any.insert(id);
             if (air) alerts.air.insert(id);
+            if (isYellowAirAlert(active)) alerts.yellow.insert(id);
             for (const json& alert : active) {
                 const json& started = alert.is_object() && alert.contains("lastUpdate") ? alert["lastUpdate"] : json();
                 if (!started.is_string()) continue;

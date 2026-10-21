@@ -16,6 +16,8 @@ struct RegionAlerts {
     std::set<std::string> any;
     // Regions with an active air alert; the site shows targets only there.
     std::set<std::string> air;
+    // Regions whose air alert carries no red level; the site draws them yellow.
+    std::set<std::string> yellow;
     // Unix milliseconds of the most recent alert start per region, where the
     // payload carries a readable time.
     std::map<std::string, std::int64_t> startedAtMs;

@@ -6,6 +6,15 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Regions whose air alert has no red level are drawn yellow, as on the
+  original map, with a softer fill and glow than the red ones.
+
+### Changed
+
+- The glow around alert regions is narrower.
+
 ## [0.2.7] - 2026-10-21
 
 ### Added

@@ -40,8 +40,9 @@ public:
     MapLayer(const MapLayer&) = delete;
     MapLayer& operator=(const MapLayer&) = delete;
 
-    // Regions to highlight; nullptr when alerts are not known yet.
-    void setAlertRegions(const std::set<std::string>* regionIds);
+    // Regions to highlight, the `yellow` ones (a subset) in the lower alert
+    // level colour; nullptr when alerts are not known yet.
+    void setAlertRegions(const std::set<std::string>* regionIds, const std::set<std::string>* yellow);
     // Re-renders the cache when needed. Must be called outside
     // BeginDrawing/BeginTextureMode, because it switches render targets.
     // While `gestureActive`, an existing cache is kept as long as it covers
@@ -104,9 +105,11 @@ private:
     const TileGeometry& tileGeometry(const alarmmap::BasemapTile& tile);
     // Regions to draw for `view` within the given distances from its centre.
     Selection select(const alarmmap::MapView& view, double halfWidthPx, double halfHeightPx) const;
+    // Fills `regions`, or the oblasts when it is null.
     void renderMask(const GlowMasks& masks, const Selection& selection, const Camera2D& camera,
-                    bool alertsOnly, float blurRadius);
-    void drawFills(const Selection& selection, bool alertsOnly, Color color) const;
+                    const std::set<std::string>* regions, float blurRadius);
+    void drawFills(const Selection& selection, const std::set<std::string>* regions, Color color) const;
+    void drawAlertFills(const Selection& selection) const;
     void drawBorders(const Selection& selection, const Camera2D& camera, float scale) const;
     void drawGlow(const GlowMasks& masks, Vector4 inner, Vector4 outer) const;
     // Oblast names, then the cities the zoom calls for, then street names
@@ -138,7 +141,8 @@ private:
     Shader dimShader_{};
     const Font& font_;
     std::vector<Label> labels_;
-    std::set<std::string> alertRegionIds_;
+    std::set<std::string> redRegionIds_;
+    std::set<std::string> yellowRegionIds_;
     GaussianBlur blur_;
     Shader glowShader_{};
     int sharpMaskLocation_ = -1;
@@ -147,7 +151,8 @@ private:
     Texture2D vignette_{};
     RenderTexture2D cache_{};
     GlowMasks country_;
-    GlowMasks alerts_;
+    GlowMasks redAlerts_;
+    GlowMasks yellowAlerts_;
     // Window size the targets were made for.
     int width_ = 0;
     int height_ = 0;
