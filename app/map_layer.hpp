@@ -109,9 +109,14 @@ private:
     void drawFills(const Selection& selection, bool alertsOnly, Color color) const;
     void drawBorders(const Selection& selection, const Camera2D& camera, float scale) const;
     void drawGlow(const GlowMasks& masks, Vector4 inner, Vector4 outer) const;
-    // Oblast names, then the cities the zoom calls for whose labels fit
-    // without overlapping anything placed before.
-    void drawLabels(const Camera2D& camera, float scale, const alarmmap::MapView& view) const;
+    // Oblast names, then the cities the zoom calls for, then street names
+    // along their roads; each label is drawn only where it fits without
+    // overlapping anything placed before.
+    void drawLabels(const Camera2D& camera, float scale, const alarmmap::MapView& view,
+                    const std::vector<std::shared_ptr<const alarmmap::BasemapTile>>& tiles) const;
+    void drawStreetNames(const Camera2D& camera, float scale,
+                         const std::vector<std::shared_ptr<const alarmmap::BasemapTile>>& tiles,
+                         std::vector<Rectangle>& placed) const;
     // Basemap tiles to draw for the tiles wanted now: each loaded tile, or
     // the nearest loaded ancestor of a missing one; lower zooms first.
     std::vector<std::shared_ptr<const alarmmap::BasemapTile>> tilesToDraw() const;

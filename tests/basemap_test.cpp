@@ -234,6 +234,33 @@ void testBuildBasemapTile(const std::filesystem::path& dataDirectory) {
         roads += tile.lines[static_cast<size_t>(line)].size();
     }
     check(roads > 0, "roads classified");
+
+    // The tile names two roads in Ukrainian; a third has only a reference.
+    const auto named = [&](const std::string& text) {
+        return std::any_of(tile.streets.begin(), tile.streets.end(), [&](const StreetName& street) {
+            return street.text == text && street.kind == BasemapLine::Minor && street.points.size() >= 2;
+        });
+    };
+    check(named("ЛІСОВА ВУЛИЦЯ") && named("ВУЛИЦЯ ХРЕЩАТИК"), "street names upper-cased");
+    check(tile.streets.size() == 2, "roads without a name get no label");
+}
+
+// A road named only with letters the upper-casing has to map one by one.
+std::string namedRoadTile() {
+    const std::vector<std::uint32_t> geometry = {command(1, 1), zigzag(0), zigzag(0),
+                                                 command(2, 1), zigzag(100), zigzag(0)};
+    const std::string feature = bytesField(2, packed({0, 0, 1, 1})) + varintField(3, 2) +
+                                bytesField(4, packed(geometry));
+    const std::string layer = bytesField(1, "transportation_name") + bytesField(2, feature) +
+                              bytesField(3, "class") + bytesField(3, "name:uk") +
+                              bytesField(4, bytesField(1, "minor")) +
+                              bytesField(4, bytesField(1, "ґанок єдності їжак")) + varintField(5, 4096);
+    return bytesField(3, layer);
+}
+
+void testStreetNameUpperCase() {
+    const BasemapTile tile = buildBasemapTile({14, 0, 0}, decodeVectorTile(namedRoadTile()));
+    check(tile.streets.size() == 1 && tile.streets[0].text == "ҐАНОК ЄДНОСТІ ЇЖАК", "Ukrainian letters upper-cased");
 }
 
 // Waits until the store has the tile or a few seconds pass.
@@ -310,6 +337,7 @@ int main(int argc, char** argv) {
         testHandMadeTile();
         testTilesCovering();
         testBuildBasemapTile(argv[1]);
+        testStreetNameUpperCase();
         testTileStore(argv[1]);
     } catch (const std::exception& error) {
         std::cerr << "unexpected exception: " << error.what() << '\n';

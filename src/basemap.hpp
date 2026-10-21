@@ -43,12 +43,22 @@ struct FillMesh {
     std::vector<std::uint32_t> indices;
 };
 
+// The name of a road, to be drawn along its line.
+struct StreetName {
+    // Upper case, as the original map shows it.
+    std::string text;
+    // Only the classes the map draws as roads.
+    BasemapLine kind;
+    std::vector<MapPoint> points;
+};
+
 struct BasemapTile {
     TileId id;
     // Indexed by BasemapFill and BasemapLine.
     std::vector<FillMesh> fills = std::vector<FillMesh>(std::size(kAllBasemapFills));
     std::vector<std::vector<std::vector<MapPoint>>> lines =
         std::vector<std::vector<std::vector<MapPoint>>>(std::size(kAllBasemapLines));
+    std::vector<StreetName> streets;
 };
 
 // Classifies the tile's features and converts them to the map plane;

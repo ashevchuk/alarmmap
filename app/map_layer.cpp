@@ -116,6 +116,19 @@ constexpr float kRegionalCityDotPx = 3.2f;
 constexpr float kTownDotPx = 2.3f;
 constexpr float kVillageDotPx = 1.6f;
 constexpr float kCityLabelGapPx = 4;
+// Street names appear from this tile zoom; before it they would only clutter.
+constexpr double kStreetNamesMinTileZoom = 12;
+constexpr float kStreetFontPx = 13;
+constexpr float kStreetSpacingPx = 0.8f;
+constexpr float kStreetOutlinePx = kLabelOutlinePx;
+constexpr float kStreetPaddingPx = 2;
+constexpr float kStreetMinGlyphShare = 0.3f;
+// A name must be this much shorter than the stretch of road it sits on, and
+// may turn this much between neighbouring letters.
+constexpr float kStreetFitMargin = 1.15f;
+constexpr float kStreetMaxTurnRadians = 0.5f;
+// Positions tried along the road, as shares of its spare length.
+constexpr float kStreetOffsetShares[] = {0.5f, 0.25f, 0.75f, 0.1f, 0.9f};
 constexpr int kVignetteSize = 512;
 constexpr float kVignetteClearShare = 0.35f;
 
@@ -158,6 +171,7 @@ constexpr Color kLabelOutline = {8, 9, 12, 225};
 constexpr Color kCityLabel = {242, 244, 250, 255};
 constexpr Color kTownLabel = {222, 226, 236, 255};
 constexpr Color kVillageLabel = {196, 202, 214, 255};
+constexpr Color kStreetLabel = {226, 231, 242, 255};
 constexpr Color kCityDot = {236, 240, 248, 255};
 constexpr Color kCityDotOutline = {10, 12, 16, 255};
 constexpr Color kMaskColor = WHITE;
@@ -371,7 +385,8 @@ void MapLayer::drawGlow(const GlowMasks& masks, Vector4 inner, Vector4 outer) co
     EndShaderMode();
 }
 
-void MapLayer::drawLabels(const Camera2D& camera, float scale, const alarmmap::MapView& view) const {
+void MapLayer::drawLabels(const Camera2D& camera, float scale, const alarmmap::MapView& view,
+                          const std::vector<std::shared_ptr<const alarmmap::BasemapTile>>& tiles) const {
     const float spacing = kLabelSpacingPx * scale;
     const float outline = kLabelOutlinePx * scale;
     const auto drawText = [&](const std::string& text, Vector2 origin, float size, Color color) {
@@ -461,6 +476,129 @@ void MapLayer::drawLabels(const Camera2D& camera, float scale, const alarmmap::M
         placed.push_back(*label);
     }
     if (!oblastLabelsPlaced) placeOblastLabels();
+    if (tileZoom >= kStreetNamesMinTileZoom) drawStreetNames(camera, scale, tiles, placed);
+}
+
+void MapLayer::drawStreetNames(const Camera2D& camera, float scale,
+                               const std::vector<std::shared_ptr<const alarmmap::BasemapTile>>& tiles,
+                               std::vector<Rectangle>& placed) const {
+    const float size = kStreetFontPx * scale;
+    const float spacing = kStreetSpacingPx * scale;
+    const float outline = kStreetOutlinePx * scale;
+    const float padding = kStreetPaddingPx * scale;
+    const auto screenWidth = static_cast<float>(cache_.texture.width);
+    const auto screenHeight = static_cast<float>(cache_.texture.height);
+
+    // Finest tiles first, so a coarser tile only fills what they left free;
+    // within a tile the more important roads come first.
+    std::vector<const alarmmap::StreetName*> streets;
+    for (auto tile = tiles.rbegin(); tile != tiles.rend(); ++tile) {
+        const size_t first = streets.size();
+        for (const alarmmap::StreetName& street : (*tile)->streets) streets.push_back(&street);
+        std::stable_sort(streets.begin() + first, streets.end(),
+                         [](const auto* a, const auto* b) { return a->kind < b->kind; });
+    }
+
+    struct Glyph {
+        std::string text;
+        float advance;
+    };
+    for (const alarmmap::StreetName* street : streets) {
+        std::vector<Vector2> path;
+        for (const MapPoint& point : street->points) path.push_back(GetWorldToScreen2D(toVector(point), camera));
+        const bool onScreen = std::any_of(path.begin(), path.end(), [&](const Vector2& point) {
+            return point.x >= 0 && point.y >= 0 && point.x <= screenWidth && point.y <= screenHeight;
+        });
+        if (!onScreen) continue;
+        if (path.back().x < path.front().x) std::reverse(path.begin(), path.end());
+
+        std::vector<float> reach(path.size(), 0);
+        for (size_t i = 1; i < path.size(); ++i) {
+            reach[i] = reach[i - 1] + std::hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+        }
+        const float pathLength = reach.back();
+        // Letters are at least this wide, which spares measuring names that cannot fit anyway.
+        if (static_cast<float>(street->text.size() / 2) * kStreetMinGlyphShare * size > pathLength) continue;
+
+        std::vector<Glyph> glyphs;
+        float textLength = -spacing;
+        const std::string& text = street->text;
+        for (size_t i = 0; i < text.size();) {
+            int length = 0;
+            GetCodepointNext(text.c_str() + i, &length);
+            std::string glyph = text.substr(i, static_cast<size_t>(length));
+            const float advance = MeasureTextEx(font_, glyph.c_str(), size, 0).x;
+            glyphs.push_back({std::move(glyph), advance});
+            textLength += advance + spacing;
+            i += static_cast<size_t>(length);
+        }
+        if (glyphs.empty() || textLength * kStreetFitMargin > pathLength) continue;
+
+        const auto pointAt = [&](float distance) {
+            const size_t next = static_cast<size_t>(
+                std::upper_bound(reach.begin(), reach.end(), distance) - reach.begin());
+            const size_t segment = std::clamp<size_t>(next, 1, path.size() - 1);
+            const float span = reach[segment] - reach[segment - 1];
+            const float along = span > 0 ? std::clamp((distance - reach[segment - 1]) / span, 0.0f, 1.0f) : 0;
+            return Vector2{path[segment - 1].x + (path[segment].x - path[segment - 1].x) * along,
+                           path[segment - 1].y + (path[segment].y - path[segment - 1].y) * along};
+        };
+
+        struct Placement {
+            Vector2 center;
+            float angle;
+        };
+        for (const float share : kStreetOffsetShares) {
+            float distance = (pathLength - textLength) * share;
+            std::vector<Placement> placements;
+            std::vector<Rectangle> areas;
+            bool fits = true;
+            for (const Glyph& glyph : glyphs) {
+                const float middle = distance + glyph.advance / 2;
+                const float reachAhead = std::min(middle + glyph.advance / 2, pathLength);
+                const float reachBehind = std::max(middle - glyph.advance / 2, 0.0f);
+                const Vector2 behind = pointAt(reachBehind), ahead = pointAt(reachAhead);
+                const float angle = std::atan2(ahead.y - behind.y, ahead.x - behind.x);
+                const Vector2 center = pointAt(middle);
+                distance += glyph.advance + spacing;
+
+                if (!placements.empty()) {
+                    float turn = std::abs(angle - placements.back().angle);
+                    if (turn > PI) turn = 2 * PI - turn;
+                    fits = turn <= kStreetMaxTurnRadians;
+                }
+                const float halfAlong = glyph.advance / 2 + padding, halfAcross = size * 0.4f + padding;
+                const float halfWidth = std::abs(std::cos(angle)) * halfAlong + std::abs(std::sin(angle)) * halfAcross;
+                const float halfHeight = std::abs(std::sin(angle)) * halfAlong + std::abs(std::cos(angle)) * halfAcross;
+                const Rectangle area = {center.x - halfWidth, center.y - halfHeight, 2 * halfWidth, 2 * halfHeight};
+                fits = fits && area.x >= 0 && area.y >= 0 && area.x + area.width <= screenWidth &&
+                       area.y + area.height <= screenHeight &&
+                       std::none_of(placed.begin(), placed.end(), [&](const Rectangle& other) {
+                           return CheckCollisionRecs(area, other);
+                       });
+                if (!fits) break;
+                placements.push_back({center, angle});
+                areas.push_back(area);
+            }
+            if (!fits) continue;
+
+            for (size_t i = 0; i < glyphs.size(); ++i) {
+                const Vector2 origin = {glyphs[i].advance / 2, size / 2};
+                const float degrees = placements[i].angle * RAD2DEG;
+                const char* glyph = glyphs[i].text.c_str();
+                for (int direction = 0; direction < kLabelOutlineDirections; ++direction) {
+                    const float angle = 2 * PI * direction / kLabelOutlineDirections;
+                    DrawTextPro(font_, glyph,
+                                {placements[i].center.x + outline * std::cos(angle),
+                                 placements[i].center.y + outline * std::sin(angle)},
+                                origin, degrees, size, 0, kLabelOutline);
+                }
+                DrawTextPro(font_, glyph, placements[i].center, origin, degrees, size, 0, kStreetLabel);
+            }
+            placed.insert(placed.end(), areas.begin(), areas.end());
+            break;
+        }
+    }
 }
 
 void MapLayer::prepare(const alarmmap::MapView& view, double now, bool gestureActive) {
@@ -537,7 +675,7 @@ void MapLayer::render(const alarmmap::MapView& view) {
     BeginMode2D(camera);
     drawBorders(selection, camera, kSupersampling * uiScale());
     EndMode2D();
-    drawLabels(camera, kSupersampling * uiScale(), view);
+    drawLabels(camera, kSupersampling * uiScale(), view, basemap);
     EndTextureMode();
 }
 

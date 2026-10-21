@@ -6,6 +6,12 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Street names along the roads from tile zoom 12, in the original map's
+  upper-case style, placed only where they fit without overlapping other
+  labels.
+
 ### Fixed
 
 - Targets are shown again after the site moved them to a private channel,
