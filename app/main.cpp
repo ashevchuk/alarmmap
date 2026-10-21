@@ -1024,7 +1024,7 @@ private:
 // The live feed and the thread running it, started and stopped together.
 struct LiveConnection {
     explicit LiveConnection(LiveState& state)
-        : feed({{kTargetsChannel, kTargetsSnapshotUrl}, {kAlertsChannel, kAlertsSnapshotUrl}},
+        : feed({{kTargetsChannel, "", true}, {kAlertsChannel, kAlertsSnapshotUrl}},
                [&state](const std::string& channel, const json& payload) { state.onPublication(channel, payload); },
                [&state](const std::string& event, const json& details) { state.onEvent(event, details); }),
           thread(feed) {}

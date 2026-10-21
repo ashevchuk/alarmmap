@@ -21,8 +21,28 @@ private:
     long status_;
 };
 
-// Returns the response body; throws HttpError on a status other than 200
-// and std::runtime_error when the request fails.
+// Requests that share one cookie store, as a browser tab does.
+class HttpClient {
+public:
+    HttpClient();
+    ~HttpClient();
+    HttpClient(const HttpClient&) = delete;
+    HttpClient& operator=(const HttpClient&) = delete;
+
+    // Both return the response body; they throw HttpError on a status other
+    // than 200 and std::runtime_error when the request fails.
+    std::string get(const std::string& url);
+    std::string postJson(const std::string& url, const std::string& body,
+                         const std::string& bearerToken);
+
+private:
+    std::string perform(const std::string& url, const std::string* jsonBody,
+                        const std::string& bearerToken);
+
+    void* curl_;
+};
+
+// A single request without cookies kept.
 std::string httpGet(const std::string& url);
 
 }  // namespace alarmmap

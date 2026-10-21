@@ -30,6 +30,7 @@ add_library(alarmmap_core STATIC
     src/map_view.cpp
     src/marker_layout.cpp
     src/mesh_builder.cpp
+    src/packed_packet.cpp
     src/projection.cpp
     src/region_geometry.cpp
     src/region_store.cpp

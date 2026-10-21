@@ -230,7 +230,7 @@ int main(int argc, char** argv) {
         const int duration = argc > 1 ? std::stoi(argv[1]) : kDefaultDurationSeconds;
         FeedCheck feed(argc > 2 ? argv[2] : kDefaultFailuresFile);
         alarmmap::LiveFeed live(
-            {{alarmmap::kTargetsChannel, alarmmap::kTargetsSnapshotUrl},
+            {{alarmmap::kTargetsChannel, "", true},
              {alarmmap::kAlertsChannel, alarmmap::kAlertsSnapshotUrl}},
             [&feed](const std::string& channel, const json& payload) { feed.onPublication(channel, payload); },
             [&feed](const std::string& event, const json& details) { feed.onEvent(event, details); });

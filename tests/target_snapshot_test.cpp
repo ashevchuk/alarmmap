@@ -3,6 +3,7 @@
 // target_packets.jsonl holds recorded compact packets together with the
 // output of the site's own JavaScript decoder for the same packet.
 
+#include "packed_packet.hpp"
 #include "target_snapshot.hpp"
 
 #include <nlohmann/json.hpp>
@@ -197,6 +198,48 @@ void testCentrifugoEnvelope() {
     check(decodeTargetSnapshot(envelope) == decodeTargetSnapshot(packet), "envelope unwrapped");
 }
 
+// packed_packets.jsonl pairs recorded packed text with the output of the
+// site's own JavaScript decoder for it.
+void testPackedPackets(const std::filesystem::path& dataDirectory) {
+    const auto lines = readJsonLines(dataDirectory / "packed_packets.jsonl");
+    check(!lines.empty(), "fixture has packed packets");
+
+    size_t targets = 0, predictions = 0;
+    for (const json& line : lines) {
+        const std::string& packed = line["packed"].get_ref<const std::string&>();
+        const TargetSnapshot expected = decodeTargetSnapshot(line["expected"]);
+        const TargetSnapshot decoded = decodeTargetSnapshot(line["packed"]);
+        check(decoded == expected, "packed equals site-decoded snapshot");
+        check(decoded.skippedEntries == 0, "a recorded packed packet is read in full");
+        check(decodeTargetSnapshot(json{{"data", {{"data", packed}}}}) == expected, "packed text in envelopes");
+
+        targets += decoded.targets.size();
+        for (const auto& target : decoded.targets) predictions += target.prediction.has_value();
+    }
+    check(targets > 0 && predictions > 0, "fixture exercises targets and predictions");
+
+    const json first = alarmmap::unpackPacket(lines[0]["packed"].get_ref<const std::string&>());
+    check(first["v"] == 2 && first["e"].is_string() && first["q"].is_string(), "unpacked header");
+    TargetSnapshotReader reader;
+    check(reader.read(lines[0]["packed"]).has_value() && !reader.read(lines[0]["packed"]),
+          "a repeated packed packet is dropped");
+}
+
+void testRejectsMalformedPacked(const std::filesystem::path& dataDirectory) {
+    const std::string packed = readJsonLines(dataDirectory / "packed_packets.jsonl")[0]["packed"];
+
+    std::string corrupted = packed;
+    corrupted[corrupted.size() / 2] = corrupted[corrupted.size() / 2] == 'A' ? 'B' : 'A';
+    checkThrows([&] { alarmmap::unpackPacket(corrupted); }, "corrupted body fails the checksum");
+    checkThrows([&] { alarmmap::unpackPacket(packed.substr(0, packed.size() / 2)); }, "truncated text");
+    checkThrows([&] { alarmmap::unpackPacket("~3:"); }, "empty body");
+    checkThrows([&] { alarmmap::unpackPacket("~3:AAAAAAAAAAAAAAAA"); }, "arbitrary body");
+    checkThrows([&] { alarmmap::unpackPacket("~4:" + packed.substr(3)); }, "unknown prefix");
+    checkThrows([&] { alarmmap::unpackPacket(packed + "*"); }, "foreign character");
+    check(!alarmmap::isPackedPacket(json{{"data", packed}}) && alarmmap::isPackedPacket(json(packed)),
+          "only a bare string counts as packed");
+}
+
 void testRejectsMalformed() {
     json packet = compactPacket(json::array({"plain"}), json::array({json::array({0, 0, 0})}));
 
@@ -298,6 +341,8 @@ int main(int argc, char** argv) {
         testTrackIdFormats();
         testAnchors();
         testCentrifugoEnvelope();
+        testPackedPackets(dataDirectory);
+        testRejectsMalformedPacked(dataDirectory);
         testRejectsMalformed();
         testDegradesGracefully();
         testReaderOrdering();

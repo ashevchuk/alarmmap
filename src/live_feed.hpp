@@ -16,10 +16,15 @@ namespace alarmmap {
 struct FeedCredentials;
 
 struct FeedChannel {
+    // What handlers see. For a public channel it is also the Centrifugo name.
     std::string name;
-    // Channel history is closed to anonymous clients, so the current state is
-    // fetched from this URL after every subscribe. Empty: no initial state.
+    // The current state is fetched from this URL after every subscribe.
+    // Empty: no initial state. Ignored for a private channel.
     std::string snapshotUrl;
+    // The channel the map page names in data-target-centrifugo-channel. The
+    // site authorizes each subscription to it and renews that every few
+    // minutes; the current state is its latest publication from the history.
+    bool isPrivate = false;
 };
 
 // Live connection to the map's Centrifugo server. Takes the connection token
@@ -31,10 +36,10 @@ public:
     using PublicationHandler =
         std::function<void(const std::string& channel, const nlohmann::json& payload)>;
     // Lifecycle notices: session_start, connected, token_renewal,
-    // session_error, snapshot_error, handler_error. Details never contain
-    // the token. After a handler_error on a publication the channel's
-    // snapshot is fetched again. A snapshot_error from an HTTP response
-    // carries its status.
+    // session_error, subscribe_error, snapshot_error, handler_error. Details
+    // never contain a token. After a handler_error on a publication the
+    // channel's state is fetched again. A snapshot_error from an HTTP
+    // response carries its status.
     using EventHandler =
         std::function<void(const std::string& event, const nlohmann::json& details)>;
 
@@ -57,6 +62,7 @@ private:
     // Returns whether the handler accepted the payload.
     bool deliver(const std::string& channel, const nlohmann::json& payload);
     void deliverSnapshot(const FeedChannel& channel);
+    void deliverHistory(const FeedChannel& channel, const nlohmann::json& result);
     void emit(const std::string& event, nlohmann::json details = nlohmann::json::object());
     bool shouldStop(std::chrono::steady_clock::time_point end) const;
     void waitBeforeRetry(std::chrono::steady_clock::duration delay);

@@ -1,6 +1,7 @@
 #include "target_snapshot.hpp"
 
 #include "base64url.hpp"
+#include "packed_packet.hpp"
 
 #include <algorithm>
 #include <array>
@@ -94,6 +95,18 @@ const json& unwrapEnvelopes(const json& packet) {
         current = &inner;
     }
     return *current;
+}
+
+// The compact packet inside a packed one, which may sit in Centrifugo's
+// {data: ...} envelopes.
+std::optional<json> unpackedPacket(const json& packet) {
+    const json* current = &packet;
+    for (int depth = 0; depth <= kMaxEnvelopeDepth; ++depth) {
+        if (isPackedPacket(*current)) return unpackPacket(current->get_ref<const std::string&>());
+        if (!current->is_object() || current->contains("v") || field(*current, "targets").is_array()) break;
+        current = &field(*current, "data");
+    }
+    return std::nullopt;
 }
 
 std::string decodeTrackId(const json& value) {
@@ -376,6 +389,7 @@ bool isNewerRevision(const std::string& candidate, const std::string& current) {
 }  // namespace
 
 TargetSnapshot decodeTargetSnapshot(const json& packet) {
+    if (const std::optional<json> unpacked = unpackedPacket(packet)) return decodeTargetSnapshot(*unpacked);
     const json& unwrapped = unwrapEnvelopes(packet);
     if (!unwrapped.is_object()) fail("invalid target snapshot");
     if (unwrapped.contains("v")) return decodeCompact(unwrapped);
@@ -384,6 +398,7 @@ TargetSnapshot decodeTargetSnapshot(const json& packet) {
 }
 
 std::optional<TargetSnapshot> TargetSnapshotReader::read(const json& packet) {
+    if (const std::optional<json> unpacked = unpackedPacket(packet)) return read(*unpacked);
     const json& unwrapped = unwrapEnvelopes(packet);
     TargetSnapshot snapshot = decodeTargetSnapshot(unwrapped);
     if (field(unwrapped, "v") != kCompactVersion) return snapshot;

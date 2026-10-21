@@ -46,7 +46,7 @@ int run(int durationSeconds, const std::filesystem::path& outputPath) {
     std::map<std::string, int> publications;
     std::map<std::string, int> events;
     alarmmap::LiveFeed feed(
-        {{alarmmap::kTargetsChannel, ""}, {alarmmap::kAlertsChannel, ""}},
+        {{alarmmap::kTargetsChannel, "", true}, {alarmmap::kAlertsChannel, ""}},
         [&](const std::string& channel, const json& payload) {
             ++publications[channel];
             output << json{{"receivedAt", unixMillis()}, {"channel", channel}, {"payload", payload}}

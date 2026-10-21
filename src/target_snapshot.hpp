@@ -113,11 +113,11 @@ struct TargetSnapshot {
     bool operator==(const TargetSnapshot&) const = default;
 };
 
-// Accepts the compact v2 packet pushed over Centrifugo or the expanded JSON
-// returned by the REST endpoint, optionally still inside Centrifugo's
-// {data: ...} envelopes. Degrades gracefully: an entry it cannot read is
-// left out and counted in skippedEntries, and fields added after the known
-// ones are ignored. Throws std::runtime_error only when the packet as a
+// Accepts the packed text pushed over Centrifugo, the compact v2 packet it
+// holds or the expanded JSON of the REST endpoint, optionally still inside
+// Centrifugo's {data: ...} envelopes. Degrades gracefully: an entry it
+// cannot read is left out and counted in skippedEntries, and fields added
+// after the known ones are ignored. Throws std::runtime_error only when the packet as a
 // whole is unusable: an unknown format or version, or no server time.
 TargetSnapshot decodeTargetSnapshot(const nlohmann::json& packet);
 

@@ -21,6 +21,7 @@ using Clock = std::chrono::steady_clock;
 
 namespace {
 
+constexpr const char* kSiteUrl = "https://map.ukrainealarm.com";
 constexpr const char* kPageUrl = "https://map.ukrainealarm.com/";
 constexpr const char* kOriginHeader = "Origin: https://map.ukrainealarm.com";
 constexpr long kConnectTimeoutSeconds = 15;
@@ -32,10 +33,18 @@ constexpr auto kInitialBackoff = std::chrono::seconds(5);
 // established session is routine and is retried almost at once.
 constexpr auto kReconnectAfterDrop = std::chrono::seconds(1);
 constexpr auto kMaxBackoff = std::chrono::seconds(60);
+constexpr auto kSubscriptionRefreshMargin = std::chrono::seconds(60);
+constexpr int kHistoryLimit = 1;
 
 // Numeric method ids of the legacy Centrifuge JSON protocol used by
 // centrifuge-js 2.x, which is what the site itself runs.
-enum class Method : int { Connect = 0, Subscribe = 1, Ping = 7 };
+enum class Method : int { Connect = 0, Subscribe = 1, History = 6, Ping = 7, SubscriptionRefresh = 11 };
+
+// An outstanding request: the channel it concerns, or -1 for none.
+struct Request {
+    Method method;
+    int channelIndex;
+};
 
 struct CurlDeleter {
     void operator()(CURL* handle) const { curl_easy_cleanup(handle); }
@@ -135,6 +144,15 @@ std::string extractHiddenInput(const std::string& html, const std::string& id) {
     return match[1].str();
 }
 
+std::string extractAttribute(const std::string& html, const std::string& name) {
+    const std::regex pattern(name + "=\"([^\"]+)\"");
+    std::smatch match;
+    if (!std::regex_search(html, match, pattern)) {
+        throw std::runtime_error("attribute '" + name + "' not found in map page");
+    }
+    return match[1].str();
+}
+
 std::chrono::system_clock::time_point jwtExpiry(const std::string& token) {
     if (std::count(token.begin(), token.end(), '.') != 2) {
         throw std::runtime_error("centrifugo-token is not a JWT");
@@ -166,19 +184,47 @@ struct FeedCredentials {
     std::string token;
     std::string url;
     std::chrono::system_clock::time_point expiresAt;
+    // What subscribing to a private channel needs: the page's tokens and the
+    // cookie it sets, which is why the client that loaded it is kept.
+    std::string page;
+    std::shared_ptr<HttpClient> http;
 };
 
 namespace {
 
 FeedCredentials fetchCredentials() {
-    const std::string html = httpGet(kPageUrl);
+    auto http = std::make_shared<HttpClient>();
+    std::string html = http->get(kPageUrl);
     FeedCredentials credentials{extractHiddenInput(html, "centrifugo-token"),
-                            extractHiddenInput(html, "centrifugo-url"), {}};
+                                extractHiddenInput(html, "centrifugo-url"),
+                                {},
+                                {},
+                                http};
+    credentials.page = std::move(html);
     if (credentials.url.rfind("wss://", 0) != 0) {
         throw std::runtime_error("centrifugo-url is not wss://");
     }
     credentials.expiresAt = jwtExpiry(credentials.token);
     return credentials;
+}
+
+std::string fetchSubscriptionToken(const FeedCredentials& credentials, const std::string& clientId,
+                                   const std::string& channel) {
+    const std::string endpoint = extractAttribute(credentials.page, "data-target-subscribe-endpoint");
+    if (!endpoint.starts_with('/')) throw std::runtime_error("subscribe endpoint is not a path");
+    const json request = {{"client", clientId}, {"channels", json::array({channel})}};
+    const json response =
+        json::parse(credentials.http->postJson(kSiteUrl + endpoint, request.dump(),
+                                               extractHiddenInput(credentials.page, "api-token")),
+                    nullptr, false);
+    if (response.is_object() && response.contains("channels") && response["channels"].is_array()) {
+        for (const json& entry : response["channels"]) {
+            if (entry.value("channel", "") == channel && entry.contains("token") && entry["token"].is_string()) {
+                return entry["token"].get<std::string>();
+            }
+        }
+    }
+    throw std::runtime_error("no subscription token for channel");
 }
 
 }  // namespace
@@ -233,6 +279,13 @@ void LiveFeed::deliverSnapshot(const FeedChannel& channel) {
     }
 }
 
+void LiveFeed::deliverHistory(const FeedChannel& channel, const json& result) {
+    const auto publications = result.find("publications");
+    if (publications == result.end() || !publications->is_array() || publications->empty()) return;
+    const json& latest = publications->back();
+    if (latest.contains("data")) deliver(channel.name, latest["data"]);
+}
+
 void LiveFeed::run(std::optional<Clock::time_point> deadline) {
     const Clock::time_point end = deadline.value_or(Clock::time_point::max());
     Clock::duration backoff = kInitialBackoff;
@@ -267,13 +320,39 @@ LiveFeed::SessionEnd LiveFeed::runSession(const FeedCredentials& credentials, Cl
 
     WebSocket socket(credentials.url);
     int nextId = 1;
-    // Request id -> channel index, or -1 for connect and ping.
-    std::map<int, int> pending;
+    std::map<int, Request> pending;
     auto send = [&](Method method, json params, int channelIndex) {
         json command = {{"id", nextId}, {"method", static_cast<int>(method)}};
         if (!params.is_null()) command["params"] = std::move(params);
         socket.sendText(command.dump());
-        pending[nextId++] = channelIndex;
+        pending[nextId++] = {method, channelIndex};
+    };
+
+    // Centrifugo names of the channels; empty for a private channel whose
+    // name the page does not give.
+    std::vector<std::string> wireNames;
+    for (const FeedChannel& channel : channels_) wireNames.push_back(channel.isPrivate ? "" : channel.name);
+    std::vector<std::optional<Clock::time_point>> refreshAt(channels_.size());
+    std::string clientId;
+
+    auto subscribe = [&](size_t index, Method method) {
+        json params = {{"channel", wireNames[index]}};
+        if (channels_[index].isPrivate) {
+            params["token"] = fetchSubscriptionToken(credentials, clientId, wireNames[index]);
+        }
+        send(method, std::move(params), static_cast<int>(index));
+    };
+    auto requestState = [&](size_t index) {
+        if (channels_[index].isPrivate) {
+            send(Method::History, {{"channel", wireNames[index]}, {"limit", kHistoryLimit}}, static_cast<int>(index));
+        } else {
+            deliverSnapshot(channels_[index]);
+        }
+    };
+    auto scheduleRefresh = [&](size_t index, const json& result) {
+        if (!result.value("expires", false) || !result.contains("ttl") || !result["ttl"].is_number()) return;
+        const auto ttl = std::chrono::seconds(result["ttl"].get<long long>());
+        refreshAt[index] = Clock::now() + std::max(ttl / 2, ttl - kSubscriptionRefreshMargin);
     };
 
     send(Method::Connect, {{"token", credentials.token}}, -1);
@@ -284,6 +363,11 @@ LiveFeed::SessionEnd LiveFeed::runSession(const FeedCredentials& credentials, Cl
         if (Clock::now() - lastPing >= kPingInterval) {
             send(Method::Ping, nullptr, -1);
             lastPing = Clock::now();
+        }
+        for (size_t i = 0; i < channels_.size(); ++i) {
+            if (!refreshAt[i] || *refreshAt[i] > Clock::now()) continue;
+            refreshAt[i].reset();
+            subscribe(i, Method::SubscriptionRefresh);
         }
         const auto frame = socket.receive(kReceiveSlice);
         if (!frame) continue;
@@ -297,35 +381,62 @@ LiveFeed::SessionEnd LiveFeed::runSession(const FeedCredentials& credentials, Cl
             if (!message.contains("id")) {
                 if (result.contains("channel") && result.contains("data")) {
                     const json& envelope = result["data"];
-                    const std::string channel = result["channel"].get<std::string>();
+                    const std::string& wireName = result["channel"].get_ref<const std::string&>();
+                    const auto known = std::find(wireNames.begin(), wireNames.end(), wireName);
+                    if (known == wireNames.end()) continue;
+                    const size_t index = static_cast<size_t>(known - wireNames.begin());
                     // Like the site, fetch the full state when a publication
                     // cannot be applied, instead of waiting for the next one.
-                    if (!deliver(channel, envelope.contains("data") ? envelope["data"] : envelope)) {
-                        const auto known = std::find_if(channels_.begin(), channels_.end(),
-                                                        [&](const FeedChannel& c) { return c.name == channel; });
-                        if (known != channels_.end()) deliverSnapshot(*known);
+                    if (!deliver(channels_[index].name, envelope.contains("data") ? envelope["data"] : envelope)) {
+                        requestState(index);
                     }
                 }
                 continue;
             }
 
             const int id = message["id"].get<int>();
-            const auto request = pending.find(id);
-            if (request == pending.end()) continue;
-            const int channelIndex = request->second;
-            pending.erase(request);
+            const auto found = pending.find(id);
+            if (found == pending.end()) continue;
+            const Request request = found->second;
+            pending.erase(found);
+            const size_t index = static_cast<size_t>(std::max(request.channelIndex, 0));
             if (message.contains("error")) {
-                throw std::runtime_error("server rejected request: " + message["error"].dump());
-            }
-            if (channelIndex >= 0) {
-                deliverSnapshot(channels_[static_cast<size_t>(channelIndex)]);
-            } else if (!connected) {
-                connected = true;
-                sessionConnected_ = true;
-                emit("connected");
-                for (size_t i = 0; i < channels_.size(); ++i) {
-                    send(Method::Subscribe, {{"channel", channels_[i].name}}, static_cast<int>(i));
+                if (request.method != Method::History) {
+                    throw std::runtime_error("server rejected request: " + message["error"].dump());
                 }
+                emit("snapshot_error", {{"channel", channels_[index].name}, {"error", message["error"]}});
+                continue;
+            }
+            switch (request.method) {
+                case Method::Connect:
+                    connected = true;
+                    sessionConnected_ = true;
+                    clientId = result.value("client", "");
+                    emit("connected");
+                    for (size_t i = 0; i < channels_.size(); ++i) {
+                        if (channels_[i].isPrivate) {
+                            try {
+                                wireNames[i] = extractAttribute(credentials.page, "data-target-centrifugo-channel");
+                            } catch (const std::exception& error) {
+                                emit("subscribe_error", {{"channel", channels_[i].name}, {"error", error.what()}});
+                                continue;
+                            }
+                        }
+                        subscribe(i, Method::Subscribe);
+                    }
+                    break;
+                case Method::Subscribe:
+                    scheduleRefresh(index, result);
+                    requestState(index);
+                    break;
+                case Method::SubscriptionRefresh:
+                    scheduleRefresh(index, result);
+                    break;
+                case Method::History:
+                    deliverHistory(channels_[index], result);
+                    break;
+                case Method::Ping:
+                    break;
             }
         }
     }

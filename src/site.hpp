@@ -6,9 +6,9 @@
 
 namespace alarmmap {
 
-inline constexpr const char* kTargetsChannel = "mapTargets_heat_legacy_v2";
-inline constexpr const char* kTargetsSnapshotUrl =
-    "https://map.ukrainealarm.com/api/v2/data/targetsForMapsState/public?separateTracks=false";
+// The targets channel is private and its Centrifugo name is given by the map
+// page, so this is only the name the app uses for it.
+inline constexpr const char* kTargetsChannel = "targets";
 inline constexpr const char* kAlertsChannel = "updateMap";
 inline constexpr const char* kAlertsSnapshotUrl = "https://map.ukrainealarm.com/api/v2/data/mapUpdate";
 // Also in tools/geometry/download.cmake, which refreshes data/ from it.

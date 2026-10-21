@@ -6,6 +6,12 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Targets are shown again after the site moved them to a private channel,
+  subscribed through the site's authorization endpoint and renewed every few
+  minutes, and began sending snapshots in a packed text form.
+
 ## [0.2.6] - 2026-10-20
 
 ### Fixed
