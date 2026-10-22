@@ -110,6 +110,9 @@ The site changes its data format without notice (most recently the target
 snapshot encoding in October 2026), so target display may break until a new
 release adapts to it. Check the releases page for updates.
 
+The site's official mobile app (Мапа тривог віджет) offers in-app purchases
+and shows third-party ads in its free version; alarmmap has neither.
+
 To check that the site still serves what the program understands, for example
 before a release:
 
