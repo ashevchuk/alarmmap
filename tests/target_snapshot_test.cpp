@@ -212,6 +212,7 @@ void testPackedPackets(const std::filesystem::path& dataDirectory) {
         check(decoded == expected, "packed equals site-decoded snapshot");
         check(decoded.skippedEntries == 0, "a recorded packed packet is read in full");
         check(decodeTargetSnapshot(json{{"data", {{"data", packed}}}}) == expected, "packed text in envelopes");
+        check(decodeTargetSnapshot(json{{"r", packed}}) == expected, "packed text in an r envelope");
 
         targets += decoded.targets.size();
         for (const auto& target : decoded.targets) predictions += target.prediction.has_value();
@@ -231,10 +232,15 @@ void testRejectsMalformedPacked(const std::filesystem::path& dataDirectory) {
     std::string corrupted = packed;
     corrupted[corrupted.size() / 2] = corrupted[corrupted.size() / 2] == 'A' ? 'B' : 'A';
     checkThrows([&] { alarmmap::unpackPacket(corrupted); }, "corrupted body fails the checksum");
+    std::string corruptedV4 = readJsonLines(dataDirectory / "packed_packets.jsonl").back()["packed"];
+    corruptedV4[corruptedV4.size() / 2] = corruptedV4[corruptedV4.size() / 2] == 'A' ? 'B' : 'A';
+    checkThrows([&] { alarmmap::unpackPacket(corruptedV4); }, "corrupted newer body fails the checksum");
     checkThrows([&] { alarmmap::unpackPacket(packed.substr(0, packed.size() / 2)); }, "truncated text");
     checkThrows([&] { alarmmap::unpackPacket("~3:"); }, "empty body");
     checkThrows([&] { alarmmap::unpackPacket("~3:AAAAAAAAAAAAAAAA"); }, "arbitrary body");
-    checkThrows([&] { alarmmap::unpackPacket("~4:" + packed.substr(3)); }, "unknown prefix");
+    checkThrows([&] { alarmmap::unpackPacket("~5:" + packed.substr(3)); }, "unknown prefix");
+    checkThrows([&] { alarmmap::unpackPacket("~4:"); }, "empty body of the newer format");
+    checkThrows([&] { alarmmap::unpackPacket("~4:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"); }, "arbitrary newer body");
     checkThrows([&] { alarmmap::unpackPacket(packed + "*"); }, "foreign character");
     check(!alarmmap::isPackedPacket(json{{"data", packed}}) && alarmmap::isPackedPacket(json(packed)),
           "only a bare string counts as packed");

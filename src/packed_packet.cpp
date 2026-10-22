@@ -2,12 +2,14 @@
 
 #include "base64url.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <optional>
 #include <vector>
 
 namespace alarmmap {
@@ -16,21 +18,35 @@ using json = nlohmann::json;
 
 namespace {
 
-constexpr std::string_view kPrefix = "~3:";
-constexpr size_t kMaxBodyBytes = 8388616;
-constexpr size_t kHeaderBytes = 8;
-constexpr size_t kMinBytes = 9;
+constexpr std::string_view kPrefixV3 = "~3:";
+constexpr std::string_view kPrefixV4 = "~4:";
+constexpr size_t kPrefixSize = 3;
+constexpr size_t kMaxBodyBytesV3 = 8388616;
+constexpr size_t kMaxBodyBytesV4 = 8388624;
+constexpr size_t kHeaderBytesV3 = 8;
+constexpr size_t kHeaderBytesV4 = 16;
 constexpr int kMaxDepth = 64;
 constexpr size_t kMaxValues = 1000000;
 constexpr size_t kMaxVarintBytes = 8;
 constexpr std::uint64_t kMaxSafeInteger = (std::uint64_t{1} << 53) - 1;
 constexpr std::uint32_t kStreamFallbackSeed = 1831565813;
 constexpr std::uint32_t kShuffleSeedMask = 2654435769u;
+constexpr std::uint32_t kArrayOrderSeedMask = 2246822507u;
+constexpr std::uint32_t kNumberSeedMask = 3266489909u;
+constexpr std::uint32_t kTagShuffleSeedMask = 668265263u;
+constexpr std::uint32_t kNumberKeyMask = 0xFFFF;
 constexpr std::uint32_t kFnvOffset = 2166136261u;
 constexpr std::uint32_t kFnvPrime = 16777619u;
 constexpr size_t kPartCount = 5;
 constexpr size_t kCompactFieldCount = 12;
 constexpr size_t kGuidSize = 16;
+constexpr size_t kWireTagCount = 10;
+constexpr size_t kCipherBlockBytes = 64;
+constexpr int kCipherDoubleRounds = 10;
+// ChaCha20 constants and the fixed key the site ships in its script, then the block counter.
+constexpr std::array<std::uint32_t, 13> kCipherState = {
+    1634760805, 857760878,  2036477234, 1797285236, 2838917605, 566540499, 2028117766,
+    3025996967, 1063430289, 3353677899, 1519178294, 2422993229, 1};
 constexpr char kBase64UrlAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 enum Tag : std::uint8_t {
@@ -73,9 +89,18 @@ std::uint32_t readUint32(const std::string& bytes, size_t offset) {
     return value;
 }
 
+// What the "~4:" format adds to the value encoding: separate streams for
+// numbers and for array order, and a shuffled wire alphabet for the tags.
+struct ValueScramble {
+    XorShift32 numbers;
+    XorShift32 arrayOrder;
+    std::array<int, 256> tagOfWire;
+};
+
 class Reader {
 public:
-    explicit Reader(const std::string& bytes) : bytes_(bytes), offset_(kHeaderBytes) {}
+    Reader(const std::string& bytes, size_t headerBytes, std::optional<ValueScramble> scramble = std::nullopt)
+        : bytes_(bytes), offset_(headerBytes), scramble_(std::move(scramble)) {}
 
     json readRoot() {
         json root = readValue(0);
@@ -115,7 +140,8 @@ private:
 
     json readValue(int depth) {
         if (depth > kMaxDepth || ++values_ > kMaxValues) fail("too deeply nested or too large");
-        switch (nextByte()) {
+        const unsigned char wire = nextByte();
+        switch (scramble_ ? scramble_->tagOfWire[wire] : wire) {
             case Null:
                 return nullptr;
             case False:
@@ -123,7 +149,8 @@ private:
             case True:
                 return true;
             case Integer: {
-                const std::uint64_t encoded = readVarint();
+                std::uint64_t encoded = readVarint();
+                if (scramble_) encoded ^= scramble_->numbers.next() & kNumberKeyMask;
                 const auto half = static_cast<std::int64_t>((encoded + (encoded & 1)) / 2);
                 return encoded & 1 ? -half : half;
             }
@@ -134,6 +161,10 @@ private:
                     bits |= static_cast<std::uint64_t>(static_cast<unsigned char>(bytes_[offset_ + i])) << (8 * i);
                 }
                 offset_ += sizeof(double);
+                if (scramble_) {
+                    bits ^= scramble_->numbers.next();
+                    bits ^= std::uint64_t{scramble_->numbers.next()} << 32;
+                }
                 const double value = std::bit_cast<double>(bits);
                 if (!std::isfinite(value)) fail("non-finite number");
                 floats_.push_back(value);
@@ -141,6 +172,10 @@ private:
             }
             case String: {
                 std::string text = takeString(readVarint());
+                if (scramble_) {
+                    const std::uint32_t key = scramble_->numbers.next();
+                    for (size_t i = 0; i < text.size(); ++i) text[i] ^= static_cast<char>(key >> (8 * (i % 4)) & 0xFF);
+                }
                 strings_.push_back(text);
                 return text;
             }
@@ -148,8 +183,15 @@ private:
                 const std::uint64_t count = readVarint();
                 require(count);
                 if (count > kMaxValues - values_) fail("too deeply nested or too large");
+                std::uint64_t start = 0;
+                bool reversed = false;
+                if (scramble_ && count > 0) {
+                    start = scramble_->arrayOrder.next() % count;
+                    reversed = scramble_->arrayOrder.next() & 1;
+                }
                 json items = json::array();
-                for (std::uint64_t i = 0; i < count; ++i) items.push_back(readValue(depth + 1));
+                items.get_ref<json::array_t&>().resize(count);
+                for (std::uint64_t i = 0; i < count; ++i) items[(start + (reversed ? count - i : i)) % count] = readValue(depth + 1);
                 return items;
             }
             case StringReference: {
@@ -163,6 +205,7 @@ private:
                 return floats_[index];
             }
             case Guid: {
+                if (scramble_) fail("unknown value tag");
                 require(kGuidSize);
                 std::string text = "~" + guidText();
                 offset_ += kGuidSize;
@@ -195,6 +238,7 @@ private:
     size_t values_ = 0;
     std::vector<std::string> strings_;
     std::vector<double> floats_;
+    std::optional<ValueScramble> scramble_;
 };
 
 bool isBase64UrlText(std::string_view text) {
@@ -207,12 +251,12 @@ bool isBase64UrlText(std::string_view text) {
 }
 
 // Removes the XOR stream in place and returns the FNV-1a hash of the result.
-std::uint32_t unscramble(std::string& bytes, std::uint32_t seed) {
+std::uint32_t unscrambleV3(std::string& bytes, std::uint32_t seed) {
     XorShift32 stream(seed);
     std::uint32_t word = 0;
     std::uint32_t hash = kFnvOffset;
-    for (size_t i = kHeaderBytes; i < bytes.size(); ++i) {
-        const size_t position = i - kHeaderBytes;
+    for (size_t i = kHeaderBytesV3; i < bytes.size(); ++i) {
+        const size_t position = i - kHeaderBytesV3;
         if (position % 4 == 0) word = stream.next();
         bytes[i] = static_cast<char>(static_cast<unsigned char>(bytes[i]) ^ (word >> (8 * (position % 4)) & 0xFF));
         hash = (hash ^ static_cast<unsigned char>(bytes[i])) * kFnvPrime;
@@ -220,32 +264,65 @@ std::uint32_t unscramble(std::string& bytes, std::uint32_t seed) {
     return hash;
 }
 
-}  // namespace
-
-bool isPackedPacket(const json& value) {
-    return value.is_string() && value.get_ref<const std::string&>().starts_with(kPrefix);
+void quarterRound(std::array<std::uint32_t, 16>& state, size_t a, size_t b, size_t c, size_t d) {
+    state[a] += state[b];
+    state[d] = std::rotl(state[d] ^ state[a], 16);
+    state[c] += state[d];
+    state[b] = std::rotl(state[b] ^ state[c], 12);
+    state[a] += state[b];
+    state[d] = std::rotl(state[d] ^ state[a], 8);
+    state[c] += state[d];
+    state[b] = std::rotl(state[b] ^ state[c], 7);
 }
 
-json unpackPacket(std::string_view text) {
-    if (!text.starts_with(kPrefix)) fail("missing prefix");
-    const std::string_view encoded = text.substr(kPrefix.size());
-    if (encoded.size() % 4 == 1 || !isBase64UrlText(encoded)) fail("invalid text");
-    std::string bytes = decodeBase64Url(encoded);
-    if (bytes.size() < kMinBytes || bytes.size() > kMaxBodyBytes) fail("invalid size");
+// Removes the ChaCha20 stream in place and returns the FNV-1a hash of the
+// result. The header words 0, 1 and 2 are the nonce.
+std::uint32_t decryptV4(std::string& bytes) {
+    std::array<std::uint32_t, 16> initial{};
+    std::copy(kCipherState.begin(), kCipherState.end(), initial.begin());
+    for (size_t i = 0; i < 3; ++i) initial[13 + i] = readUint32(bytes, 4 * i);
 
-    const std::uint32_t seed = readUint32(bytes, 0);
-    if (unscramble(bytes, seed) != readUint32(bytes, 4)) fail("checksum mismatch");
+    for (size_t block = kHeaderBytesV4; block < bytes.size(); block += kCipherBlockBytes) {
+        std::array<std::uint32_t, 16> state = initial;
+        for (int round = 0; round < kCipherDoubleRounds; ++round) {
+            quarterRound(state, 0, 4, 8, 12);
+            quarterRound(state, 1, 5, 9, 13);
+            quarterRound(state, 2, 6, 10, 14);
+            quarterRound(state, 3, 7, 11, 15);
+            quarterRound(state, 0, 5, 10, 15);
+            quarterRound(state, 1, 6, 11, 12);
+            quarterRound(state, 2, 7, 8, 13);
+            quarterRound(state, 3, 4, 9, 14);
+        }
+        const size_t length = std::min(kCipherBlockBytes, bytes.size() - block);
+        for (size_t i = 0; i < length; ++i) {
+            const std::uint32_t word = state[i / 4] + initial[i / 4];
+            bytes[block + i] = static_cast<char>(static_cast<unsigned char>(bytes[block + i]) ^ (word >> (8 * (i % 4)) & 0xFF));
+        }
+        ++initial[12];
+    }
 
-    json parts = Reader(bytes).readRoot();
-    if (!parts.is_array() || parts.size() != kPartCount) fail("invalid layout");
+    std::uint32_t hash = kFnvOffset;
+    for (size_t i = kHeaderBytesV4; i < bytes.size(); ++i) hash = (hash ^ static_cast<unsigned char>(bytes[i])) * kFnvPrime;
+    return hash;
+}
 
-    // The five parts arrive in an order shuffled by the seed.
-    std::array<size_t, kPartCount> order = {0, 1, 2, 3, 4};
-    XorShift32 shuffle(kShuffleSeedMask ^ seed);
-    for (size_t i = kPartCount - 1; i > 0; --i) std::swap(order[i], order[shuffle.next() % (i + 1)]);
-    json fields(kPartCount, nullptr);
-    for (size_t i = 0; i < kPartCount; ++i) fields[order[i]] = std::move(parts[i]);
+ValueScramble valueScramble(const std::string& bytes) {
+    const std::uint32_t first = readUint32(bytes, 0);
+    const std::uint32_t second = readUint32(bytes, 4);
+    const std::uint32_t third = readUint32(bytes, 8);
 
+    ValueScramble scramble{XorShift32(kNumberSeedMask ^ second), XorShift32(first ^ third ^ kArrayOrderSeedMask), {}};
+    scramble.tagOfWire.fill(-1);
+    std::array<int, kWireTagCount> wireOfTag{};
+    for (size_t i = 0; i < kWireTagCount; ++i) wireOfTag[i] = static_cast<int>(i);
+    XorShift32 shuffle(first ^ second ^ third ^ kTagShuffleSeedMask);
+    for (size_t i = kWireTagCount - 1; i > 0; --i) std::swap(wireOfTag[i], wireOfTag[shuffle.next() % (i + 1)]);
+    for (size_t tag = 0; tag < kWireTagCount; ++tag) scramble.tagOfWire[wireOfTag[tag]] = static_cast<int>(tag);
+    return scramble;
+}
+
+json compactPacket(const json& fields) {
     const json& coverage = fields[3];
     if (!fields[0].is_string() || !fields[1].is_string() || !fields[2].is_boolean() ||
         !coverage.is_number() || coverage.get<double>() < 0 || coverage.get<double>() > 100 ||
@@ -255,6 +332,50 @@ json unpackPacket(std::string_view text) {
     json packet = {{"v", 2}, {"e", fields[0]}, {"q", fields[1]}, {"a", coverage}, {"d", fields[4]}};
     if (!fields[2].get<bool>()) packet["p"] = 0;
     return packet;
+}
+
+json unpackV3(std::string bytes) {
+    if (bytes.size() < kHeaderBytesV3 + 1 || bytes.size() > kMaxBodyBytesV3) fail("invalid size");
+
+    const std::uint32_t seed = readUint32(bytes, 0);
+    if (unscrambleV3(bytes, seed) != readUint32(bytes, 4)) fail("checksum mismatch");
+
+    json parts = Reader(bytes, kHeaderBytesV3).readRoot();
+    if (!parts.is_array() || parts.size() != kPartCount) fail("invalid layout");
+
+    // The five parts arrive in an order shuffled by the seed.
+    std::array<size_t, kPartCount> order = {0, 1, 2, 3, 4};
+    XorShift32 shuffle(kShuffleSeedMask ^ seed);
+    for (size_t i = kPartCount - 1; i > 0; --i) std::swap(order[i], order[shuffle.next() % (i + 1)]);
+    json fields(kPartCount, nullptr);
+    for (size_t i = 0; i < kPartCount; ++i) fields[order[i]] = std::move(parts[i]);
+    return compactPacket(fields);
+}
+
+json unpackV4(std::string bytes) {
+    if (bytes.size() < kHeaderBytesV4 + 1 || bytes.size() > kMaxBodyBytesV4) fail("invalid size");
+    if (decryptV4(bytes) != readUint32(bytes, 12)) fail("checksum mismatch");
+
+    json fields = Reader(bytes, kHeaderBytesV4, valueScramble(bytes)).readRoot();
+    if (!fields.is_array() || fields.size() != kPartCount) fail("invalid layout");
+    return compactPacket(fields);
+}
+
+}  // namespace
+
+bool isPackedPacket(const json& value) {
+    if (!value.is_string()) return false;
+    const std::string& text = value.get_ref<const std::string&>();
+    return text.starts_with(kPrefixV3) || text.starts_with(kPrefixV4);
+}
+
+json unpackPacket(std::string_view text) {
+    const bool v4 = text.starts_with(kPrefixV4);
+    if (!v4 && !text.starts_with(kPrefixV3)) fail("missing prefix");
+    const std::string_view encoded = text.substr(kPrefixSize);
+    if (encoded.size() % 4 == 1 || !isBase64UrlText(encoded)) fail("invalid text");
+    std::string bytes = decodeBase64Url(encoded);
+    return v4 ? unpackV4(std::move(bytes)) : unpackV3(std::move(bytes));
 }
 
 }  // namespace alarmmap
