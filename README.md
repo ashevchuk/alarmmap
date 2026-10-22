@@ -105,8 +105,13 @@ for what it needs and how to sign with your own key.
 
 ## Checking the site's API
 
-The program depends on how map.ukrainealarm.com serves its data. To check
-that it still does, for example before a release:
+The program is unofficial and reads the public feed of map.ukrainealarm.com.
+The site changes its data format without notice (most recently the target
+snapshot encoding in October 2026), so target display may break until a new
+release adapts to it. Check the releases page for updates.
+
+To check that the site still serves what the program understands, for example
+before a release:
 
 ```sh
 ./build/api_check            # listens to the live feed for 90 s
