@@ -108,7 +108,12 @@ for what it needs and how to sign with your own key.
 The program is unofficial and reads the public feed of map.ukrainealarm.com.
 The site changes its data format without notice (most recently the target
 snapshot encoding in October 2026), so target display may break until a new
-release adapts to it. Check the releases page for updates.
+release adapts to it. The program tells you when a newer release exists: at
+start and then once a day it asks the GitHub API for the latest release and,
+if it is newer, shows a notice under the status line that opens the release
+page when clicked or tapped. That request reveals your IP address to GitHub.
+Set `ALARMMAP_NO_UPDATE_CHECK` to any value to turn the check off on the
+desktop; the Android app always checks.
 
 The site's official mobile app (Мапа тривог віджет) offers in-app purchases
 and shows third-party ads in its free version; alarmmap has neither.

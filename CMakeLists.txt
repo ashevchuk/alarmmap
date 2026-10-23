@@ -38,6 +38,7 @@ add_library(alarmmap_core STATIC
     src/target_motion.cpp
     src/target_snapshot.cpp
     src/tile_store.cpp
+    src/update_check.cpp
     src/vector_tile.cpp)
 target_include_directories(alarmmap_core PUBLIC src)
 target_include_directories(alarmmap_core SYSTEM PRIVATE ${earcut_SOURCE_DIR}/include)
@@ -98,7 +99,7 @@ target_compile_definitions(api_check PRIVATE ALARMMAP_DATA_DIR="${CMAKE_CURRENT_
 target_compile_options(api_check PRIVATE ${WARNING_FLAGS})
 
 enable_testing()
-foreach(test_name target_snapshot geometry heat basemap mesh)
+foreach(test_name target_snapshot geometry heat basemap mesh update_check)
     add_executable(${test_name}_test tests/${test_name}_test.cpp)
     target_link_libraries(${test_name}_test PRIVATE alarmmap_core)
     target_compile_options(${test_name}_test PRIVATE ${WARNING_FLAGS})

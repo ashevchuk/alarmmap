@@ -12,6 +12,7 @@
 
 #include "heat_cells.hpp"
 #include "heat_renderer.hpp"
+#include "http.hpp"
 #include "app_icon.hpp"
 #include "cities.hpp"
 #include "live_feed.hpp"
@@ -30,6 +31,7 @@
 #include "target_motion.hpp"
 #include "target_snapshot.hpp"
 #include "tile_store.hpp"
+#include "update_check.hpp"
 #include "ui_font.hpp"
 
 #include <raylib.h>
@@ -47,6 +49,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -93,6 +96,9 @@ constexpr int kMinimumWidth = 320;
 constexpr int kMinimumHeight = 220;
 constexpr float kStatusMarginPx = 24;
 constexpr float kStatusFontPx = 17;
+constexpr float kUpdateNoticeGapPx = 8;
+constexpr float kUpdateNoticePaddingPx = 8;
+constexpr std::chrono::hours kUpdateCheckInterval{24};
 constexpr float kStatusDotRadiusPx = 5;
 constexpr float kTextSpacingPx = 0.3f;
 constexpr float kPanelPaddingPx = 12;
@@ -475,6 +481,7 @@ public:
             drawScaledAround({0, 0}, ui, [&] {
                 drawSummary(markers, icons, static_cast<int>(height / ui));
                 if (status) drawStatus(*status);
+                if (newerVersion) drawUpdateNotice();
                 drawCredits(width / ui, height / ui);
             });
             return;
@@ -512,6 +519,7 @@ public:
             if (hovered) drawTooltip(*hovered, markers, camera, width / ui, height / ui);
             drawSummary(markers, icons, static_cast<int>(height / ui));
             if (status) drawStatus(*status);
+            if (newerVersion) drawUpdateNotice();
             drawCredits(width / ui, height / ui);
         });
     }
@@ -566,7 +574,19 @@ public:
         return std::hypot(kyiv.x - point.x, kyiv.y - point.y) <= kCapitalReachPx * uiScale();
     }
 
+    // Whether `point` on screen is on the new-version notice, which then opens
+    // the release page.
+    bool openUpdateNoticeAt(Vector2 point) const {
+        if (!newerVersion) return false;
+        const float ui = uiScale();
+        const Rectangle bounds = updateNoticeBounds(updateNoticeText());
+        if (!CheckCollisionPointRec({point.x / ui, point.y / ui}, bounds)) return false;
+        OpenURL(releasePageUrl(*newerVersion).c_str());
+        return true;
+    }
+
     std::optional<StatusLine> status;
+    std::optional<std::string> newerVersion;
 
 private:
     MapPoint capitalPosition() const {
@@ -680,6 +700,31 @@ private:
         DrawTextEx(font_, kCreditsText,
                    {width - kStatusMarginPx - extent.x, height - kStatusMarginPx / 2 - extent.y},
                    kCreditsFontPx, kTextSpacingPx, kCreditsColor);
+    }
+
+    std::string updateNoticeText() const {
+#ifdef __ANDROID__
+        const char* action = "торкніться";
+#else
+        const char* action = "натисніть";
+#endif
+        return "Доступна нова версія " + *newerVersion + " · " + action + ", щоб відкрити";
+    }
+
+    // In unscaled UI pixels, under the status line.
+    Rectangle updateNoticeBounds(const std::string& text) const {
+        const Vector2 extent = MeasureTextEx(font_, text.c_str(), kStatusFontPx, kTextSpacingPx);
+        return {kStatusMarginPx, kStatusMarginPx + kStatusFontPx + kUpdateNoticeGapPx,
+                extent.x + 2 * kUpdateNoticePaddingPx, extent.y + 2 * kUpdateNoticePaddingPx};
+    }
+
+    void drawUpdateNotice() const {
+        const std::string text = updateNoticeText();
+        const Rectangle bounds = updateNoticeBounds(text);
+        DrawRectangleRounded(bounds, 0.3f, 8, kPanelBackground);
+        DrawRectangleRoundedLinesEx(bounds, 0.3f, 8, 1, kConnectingDot);
+        DrawTextEx(font_, text.c_str(), {bounds.x + kUpdateNoticePaddingPx, bounds.y + kUpdateNoticePaddingPx},
+                   kStatusFontPx, kTextSpacingPx, kConnectingDot);
     }
 
     void drawStatus(const StatusLine& line) const {
@@ -1033,6 +1078,61 @@ struct LiveConnection {
     FeedThread thread;  // after `feed`, so it stops before the feed goes away
 };
 
+// Asks GitHub once a day whether a newer release exists. A failed check is
+// logged and tried again at the next interval.
+class UpdateWatch {
+public:
+    UpdateWatch() : thread_([this] { run(); }) {}
+    ~UpdateWatch() {
+        {
+            std::lock_guard lock(mutex_);
+            stopping_ = true;
+        }
+        wake_.notify_all();
+        thread_.join();
+    }
+    UpdateWatch(const UpdateWatch&) = delete;
+    UpdateWatch& operator=(const UpdateWatch&) = delete;
+
+    std::optional<std::string> newerVersion() const {
+        std::lock_guard lock(mutex_);
+        return newerVersion_;
+    }
+
+private:
+    void run() {
+        std::unique_lock lock(mutex_);
+        while (!stopping_) {
+            lock.unlock();
+            std::optional<std::string> found;
+            try {
+                found = newerReleaseVersion(json::parse(httpGet(kLatestReleaseUrl)), ALARMMAP_VERSION);
+            } catch (const std::exception& error) {
+                std::cout << "update check failed: " << error.what() << '\n';
+            }
+            lock.lock();
+            if (found) newerVersion_ = std::move(found);
+            wake_.wait_for(lock, kUpdateCheckInterval, [this] { return stopping_; });
+        }
+    }
+
+    mutable std::mutex mutex_;
+    std::condition_variable wake_;
+    bool stopping_ = false;
+    std::optional<std::string> newerVersion_;
+    std::thread thread_;  // last, so that it starts with everything else ready
+};
+
+// The desktop build can turn the check off; the phone has no way to set a
+// variable, so it always checks.
+bool updateCheckEnabled(const Options& options) {
+#ifdef __ANDROID__
+    return isLive(options) && !options.screenshot;
+#else
+    return isLive(options) && !options.screenshot && !std::getenv("ALARMMAP_NO_UPDATE_CHECK");
+#endif
+}
+
 #ifdef __ANDROID__
 // Android reports the app's lifecycle through raylib's command callback.
 // This hook runs ahead of it and stops the live feed once the app goes to
@@ -1237,6 +1337,8 @@ int run(const Options& options) {
     LiveState state;
     std::unique_ptr<LiveConnection> connection;
     if (isLive(options)) connection = std::make_unique<LiveConnection>(state);
+    std::unique_ptr<UpdateWatch> updateWatch;
+    if (updateCheckEnabled(options)) updateWatch = std::make_unique<UpdateWatch>();
 
     // No FLAG_MSAA_4X_HINT: on the NVIDIA driver, interactive resizing of a
     // multisampled window triggers Xid 69 GPU errors that stall the compositor.
@@ -1335,7 +1437,7 @@ int run(const Options& options) {
                     }
                 }
 #endif
-                if (tap) {
+                if (tap && !scene.openUpdateNoticeAt(*tap)) {
                     if (scene.isCapitalAt(viewCamera(view), *tap)) {
                         capitalTaps = now - lastCapitalTap <= kTapStreakGapSeconds ? capitalTaps + 1 : 1;
                         lastCapitalTap = now;
@@ -1366,6 +1468,7 @@ int run(const Options& options) {
                     // Refreshed every frame so the age of the snapshot keeps counting.
                     scene.status = describeLiveStatus(liveData, nowSeconds());
                 }
+                if (updateWatch) scene.newerVersion = updateWatch->newerVersion();
 #ifdef __ANDROID__
                 renderFrame(scene, heat, icons, view, now, nullptr, focus, touch.active());
 #else
