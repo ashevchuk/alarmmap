@@ -98,13 +98,15 @@ const json& unwrapEnvelopes(const json& packet) {
 }
 
 // The compact packet inside a packed one, which may sit in Centrifugo's
-// {data: ...} envelopes or in an {r: ...} one.
+// {data: ...} envelopes or in an {r: ...} or {n: ...} one.
 std::optional<json> unpackedPacket(const json& packet) {
     const json* current = &packet;
     for (int depth = 0; depth <= kMaxEnvelopeDepth; ++depth) {
         if (isPackedPacket(*current)) return unpackPacket(current->get_ref<const std::string&>());
-        if (current->is_object() && isPackedPacket(field(*current, "r"))) {
-            return unpackPacket(field(*current, "r").get_ref<const std::string&>());
+        for (const char* key : {"r", "n"}) {
+            if (current->is_object() && isPackedPacket(field(*current, key))) {
+                return unpackPacket(field(*current, key).get_ref<const std::string&>());
+            }
         }
         if (!current->is_object() || current->contains("v") || field(*current, "targets").is_array()) break;
         current = &field(*current, "data");

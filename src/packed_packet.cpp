@@ -20,6 +20,7 @@ namespace {
 
 constexpr std::string_view kPrefixV3 = "~3:";
 constexpr std::string_view kPrefixV4 = "~4:";
+constexpr std::string_view kPrefixV5 = "~5:";
 constexpr size_t kPrefixSize = 3;
 constexpr size_t kMaxBodyBytesV3 = 8388616;
 constexpr size_t kMaxBodyBytesV4 = 8388624;
@@ -38,6 +39,8 @@ constexpr std::uint32_t kNumberKeyMask = 0xFFFF;
 constexpr std::uint32_t kFnvOffset = 2166136261u;
 constexpr std::uint32_t kFnvPrime = 16777619u;
 constexpr size_t kPartCount = 5;
+constexpr size_t kRootPartCountV5 = 6;
+constexpr int kLayoutVersionV5 = 5;
 constexpr size_t kCompactFieldCount = 12;
 constexpr size_t kGuidSize = 16;
 constexpr size_t kWireTagCount = 10;
@@ -89,7 +92,7 @@ std::uint32_t readUint32(const std::string& bytes, size_t offset) {
     return value;
 }
 
-// What the "~4:" format adds to the value encoding: separate streams for
+// What the "~4:" and "~5:" formats add to the value encoding: separate streams for
 // numbers and for array order, and a shuffled wire alphabet for the tags.
 struct ValueScramble {
     XorShift32 numbers;
@@ -352,13 +355,32 @@ json unpackV3(std::string bytes) {
     return compactPacket(fields);
 }
 
-json unpackV4(std::string bytes) {
+json readScrambledRoot(std::string& bytes) {
     if (bytes.size() < kHeaderBytesV4 + 1 || bytes.size() > kMaxBodyBytesV4) fail("invalid size");
     if (decryptV4(bytes) != readUint32(bytes, 12)) fail("checksum mismatch");
+    return Reader(bytes, kHeaderBytesV4, valueScramble(bytes)).readRoot();
+}
 
-    json fields = Reader(bytes, kHeaderBytesV4, valueScramble(bytes)).readRoot();
+json unpackV4(std::string bytes) {
+    json fields = readScrambledRoot(bytes);
     if (!fields.is_array() || fields.size() != kPartCount) fail("invalid layout");
     return compactPacket(fields);
+}
+
+// The "~5:" root groups the same data as the compact packet differently:
+// [5, [q, e], [coverage, targetsEnabled], [times and fog], [track IDs, cells, styles],
+//  [extrapolation trail, trail, targets, movement]].
+json unpackV5(std::string bytes) {
+    const json root = readScrambledRoot(bytes);
+    const auto sized = [](const json& part, size_t count) { return part.is_array() && part.size() == count; };
+    if (!sized(root, kRootPartCountV5) || root[0] != kLayoutVersionV5 || !sized(root[1], 2) ||
+        !sized(root[2], 2) || !sized(root[3], 5) || !sized(root[4], 3) || !sized(root[5], 4)) {
+        fail("invalid layout");
+    }
+    const json &header = root[1], &flags = root[2], &times = root[3], &tables = root[4], &rows = root[5];
+    const json compactFields = json::array({times[0], times[1], times[2], times[3], times[4], tables[1],
+                                            tables[2], tables[0], rows[2], rows[1], rows[0], rows[3]});
+    return compactPacket(json::array({header[1], header[0], flags[1], flags[0], compactFields}));
 }
 
 }  // namespace
@@ -366,16 +388,18 @@ json unpackV4(std::string bytes) {
 bool isPackedPacket(const json& value) {
     if (!value.is_string()) return false;
     const std::string& text = value.get_ref<const std::string&>();
-    return text.starts_with(kPrefixV3) || text.starts_with(kPrefixV4);
+    return text.starts_with(kPrefixV3) || text.starts_with(kPrefixV4) || text.starts_with(kPrefixV5);
 }
 
 json unpackPacket(std::string_view text) {
+    const bool v3 = text.starts_with(kPrefixV3);
     const bool v4 = text.starts_with(kPrefixV4);
-    if (!v4 && !text.starts_with(kPrefixV3)) fail("missing prefix");
+    if (!v3 && !v4 && !text.starts_with(kPrefixV5)) fail("missing prefix");
     const std::string_view encoded = text.substr(kPrefixSize);
     if (encoded.size() % 4 == 1 || !isBase64UrlText(encoded)) fail("invalid text");
     std::string bytes = decodeBase64Url(encoded);
-    return v4 ? unpackV4(std::move(bytes)) : unpackV3(std::move(bytes));
+    if (v3) return unpackV3(std::move(bytes));
+    return v4 ? unpackV4(std::move(bytes)) : unpackV5(std::move(bytes));
 }
 
 }  // namespace alarmmap
