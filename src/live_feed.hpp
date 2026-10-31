@@ -14,6 +14,7 @@
 namespace alarmmap {
 
 struct FeedCredentials;
+class HttpClient;
 
 struct FeedChannel {
     // What handlers see. For a public channel it is also the Centrifugo name.
@@ -25,6 +26,9 @@ struct FeedChannel {
     // site authorizes each subscription to it and renews that every few
     // minutes; the current state is its latest publication from the history.
     bool isPrivate = false;
+    // A path on the site fetched every few seconds while the session runs; the
+    // response is delivered like a publication. Empty: not polled.
+    std::string pollPath = "";
 };
 
 // Live connection to the map's Centrifugo server. Takes the connection token
@@ -62,6 +66,8 @@ private:
     // Returns whether the handler accepted the payload.
     bool deliver(const std::string& channel, const nlohmann::json& payload);
     void deliverSnapshot(const FeedChannel& channel);
+    // Returns whether the response was fetched.
+    bool pollChannel(const FeedChannel& channel, HttpClient& http);
     void deliverHistory(const FeedChannel& channel, const nlohmann::json& result);
     void emit(const std::string& event, nlohmann::json details = nlohmann::json::object());
     bool shouldStop(std::chrono::steady_clock::time_point end) const;

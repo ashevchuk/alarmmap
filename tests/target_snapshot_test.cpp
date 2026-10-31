@@ -227,6 +227,17 @@ void testPackedPackets(const std::filesystem::path& dataDirectory) {
           "a repeated packed packet is dropped");
 }
 
+// The site also publishes targets as rendered SVG scenes in "~s2:" packets,
+// which carry no rows; the reader leaves them out instead of failing.
+void testSurfacePacketsAreSkipped() {
+    const json surface = {{"v", 2}, {"c", "6cbc2f20b6bf"}, {"e", "\"etag\""},
+                          {"l", std::string(64, 'a')}, {"n", "~s2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}};
+    TargetSnapshotReader reader;
+    check(!reader.read(surface), "a surface packet is left out");
+    check(!reader.read(json{{"data", surface}}), "a surface packet in an envelope is left out");
+    checkThrows([&] { decodeTargetSnapshot(surface); }, "a surface packet is not a snapshot");
+}
+
 void testRejectsMalformedPacked(const std::filesystem::path& dataDirectory) {
     const std::string packed = readJsonLines(dataDirectory / "packed_packets.jsonl")[0]["packed"];
 
@@ -352,6 +363,7 @@ int main(int argc, char** argv) {
         testCentrifugoEnvelope();
         testPackedPackets(dataDirectory);
         testRejectsMalformedPacked(dataDirectory);
+        testSurfacePacketsAreSkipped();
         testRejectsMalformed();
         testDegradesGracefully();
         testReaderOrdering();

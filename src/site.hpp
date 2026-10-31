@@ -10,6 +10,9 @@ namespace alarmmap {
 // page, so this is only the name the app uses for it.
 inline constexpr const char* kTargetsChannel = "targets";
 inline constexpr const char* kAlertsChannel = "updateMap";
+// The site publishes target snapshots on the WebSocket as rendered SVG scenes,
+// which the app cannot read; this HTTP endpoint serves the data snapshot.
+inline constexpr const char* kTargetsPollPath = "/api/centrifuge/map/fallback";
 inline constexpr const char* kAlertsSnapshotUrl = "https://map.ukrainealarm.com/api/v2/data/mapUpdate";
 // Also in tools/geometry/download.cmake, which refreshes data/ from it.
 inline constexpr const char* kRegionsUrl = "https://map.ukrainealarm.com/data/real-map/regions-standard-v1.geojson";

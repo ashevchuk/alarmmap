@@ -114,6 +114,13 @@ std::optional<json> unpackedPacket(const json& packet) {
     return std::nullopt;
 }
 
+// The site's rendered-scene packets: an SVG drawing of the targets with no
+// rows to read.
+bool isSurfacePacket(const json& packet) {
+    const json& text = field(packet, "n");
+    return text.is_string() && text.get_ref<const std::string&>().starts_with("~s");
+}
+
 std::string decodeTrackId(const json& value) {
     if (!value.is_string()) fail("invalid track ID reference");
     const std::string& text = value.get_ref<const std::string&>();
@@ -397,6 +404,7 @@ TargetSnapshot decodeTargetSnapshot(const json& packet) {
     if (const std::optional<json> unpacked = unpackedPacket(packet)) return decodeTargetSnapshot(*unpacked);
     const json& unwrapped = unwrapEnvelopes(packet);
     if (!unwrapped.is_object()) fail("invalid target snapshot");
+    if (isSurfacePacket(unwrapped)) fail("target snapshot is a rendered surface");
     if (unwrapped.contains("v")) return decodeCompact(unwrapped);
     if (!field(unwrapped, "targets").is_array()) fail("invalid target snapshot");
     return decodeExpanded(unwrapped);
@@ -405,6 +413,7 @@ TargetSnapshot decodeTargetSnapshot(const json& packet) {
 std::optional<TargetSnapshot> TargetSnapshotReader::read(const json& packet) {
     if (const std::optional<json> unpacked = unpackedPacket(packet)) return read(*unpacked);
     const json& unwrapped = unwrapEnvelopes(packet);
+    if (isSurfacePacket(unwrapped)) return std::nullopt;
     TargetSnapshot snapshot = decodeTargetSnapshot(unwrapped);
     if (field(unwrapped, "v") != kCompactVersion) return snapshot;
 

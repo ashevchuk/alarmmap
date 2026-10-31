@@ -35,6 +35,9 @@ constexpr auto kReconnectAfterDrop = std::chrono::seconds(1);
 constexpr auto kMaxBackoff = std::chrono::seconds(60);
 constexpr auto kSubscriptionRefreshMargin = std::chrono::seconds(60);
 constexpr int kHistoryLimit = 1;
+// The polled endpoint is cached by the site for 10 s.
+constexpr auto kPollInterval = std::chrono::seconds(10);
+constexpr auto kPollRetryInterval = std::chrono::seconds(60);
 
 // Numeric method ids of the legacy Centrifuge JSON protocol used by
 // centrifuge-js 2.x, which is what the site itself runs.
@@ -279,6 +282,18 @@ void LiveFeed::deliverSnapshot(const FeedChannel& channel) {
     }
 }
 
+bool LiveFeed::pollChannel(const FeedChannel& channel, HttpClient& http) {
+    try {
+        deliver(channel.name, json::parse(http.get(kSiteUrl + channel.pollPath)));
+        return true;
+    } catch (const HttpError& error) {
+        emit("snapshot_error", {{"channel", channel.name}, {"error", error.what()}, {"status", error.status()}});
+    } catch (const std::exception& error) {
+        emit("snapshot_error", {{"channel", channel.name}, {"error", error.what()}});
+    }
+    return false;
+}
+
 void LiveFeed::deliverHistory(const FeedChannel& channel, const json& result) {
     const auto publications = result.find("publications");
     if (publications == result.end() || !publications->is_array() || publications->empty()) return;
@@ -333,6 +348,7 @@ LiveFeed::SessionEnd LiveFeed::runSession(const FeedCredentials& credentials, Cl
     std::vector<std::string> wireNames;
     for (const FeedChannel& channel : channels_) wireNames.push_back(channel.isPrivate ? "" : channel.name);
     std::vector<std::optional<Clock::time_point>> refreshAt(channels_.size());
+    std::vector<std::optional<Clock::time_point>> pollAt(channels_.size());
     std::string clientId;
 
     auto subscribe = [&](size_t index, Method method) {
@@ -368,6 +384,10 @@ LiveFeed::SessionEnd LiveFeed::runSession(const FeedCredentials& credentials, Cl
             if (!refreshAt[i] || *refreshAt[i] > Clock::now()) continue;
             refreshAt[i].reset();
             subscribe(i, Method::SubscriptionRefresh);
+        }
+        for (size_t i = 0; i < channels_.size(); ++i) {
+            if (!pollAt[i] || *pollAt[i] > Clock::now()) continue;
+            pollAt[i] = Clock::now() + (pollChannel(channels_[i], *credentials.http) ? kPollInterval : kPollRetryInterval);
         }
         const auto frame = socket.receive(kReceiveSlice);
         if (!frame) continue;
@@ -428,6 +448,7 @@ LiveFeed::SessionEnd LiveFeed::runSession(const FeedCredentials& credentials, Cl
                 case Method::Subscribe:
                     scheduleRefresh(index, result);
                     requestState(index);
+                    if (!channels_[index].pollPath.empty()) pollAt[index] = Clock::now();
                     break;
                 case Method::SubscriptionRefresh:
                     scheduleRefresh(index, result);
