@@ -6,6 +6,15 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-10-31
+
+### Fixed
+
+- Targets work again after the site began publishing them on the WebSocket as
+  rendered SVG scenes (`~s2:` packets), which carry no readable rows. The
+  program now fetches the site's HTTP snapshot every 10 seconds instead and
+  ignores the scene packets.
+
 ## [0.2.11] - 2026-10-23
 
 ### Added
@@ -171,7 +180,8 @@ project follows [Semantic Versioning](https://semver.org/).
 - Window icon.
 - Installable, relocatable build and an x86-64 AppImage.
 
-[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.11...HEAD
+[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.12...HEAD
+[0.2.12]: https://github.com/ashevchuk/alarmmap/compare/v0.2.11...v0.2.12
 [0.2.11]: https://github.com/ashevchuk/alarmmap/compare/v0.2.10...v0.2.11
 [0.2.10]: https://github.com/ashevchuk/alarmmap/compare/v0.2.9...v0.2.10
 [0.2.9]: https://github.com/ashevchuk/alarmmap/compare/v0.2.8...v0.2.9
