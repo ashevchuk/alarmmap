@@ -6,6 +6,8 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-11-12
+
 ### Changed
 
 - Alerts are read from the site's HTTP snapshot, polled every 10 seconds,
@@ -188,7 +190,8 @@ project follows [Semantic Versioning](https://semver.org/).
 - Window icon.
 - Installable, relocatable build and an x86-64 AppImage.
 
-[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.12...HEAD
+[Unreleased]: https://github.com/ashevchuk/alarmmap/compare/v0.2.13...HEAD
+[0.2.13]: https://github.com/ashevchuk/alarmmap/compare/v0.2.12...v0.2.13
 [0.2.12]: https://github.com/ashevchuk/alarmmap/compare/v0.2.11...v0.2.12
 [0.2.11]: https://github.com/ashevchuk/alarmmap/compare/v0.2.10...v0.2.11
 [0.2.10]: https://github.com/ashevchuk/alarmmap/compare/v0.2.9...v0.2.10
