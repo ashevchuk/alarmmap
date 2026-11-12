@@ -15,7 +15,7 @@
 #include "http.hpp"
 #include "app_icon.hpp"
 #include "cities.hpp"
-#include "live_feed.hpp"
+#include "alert_poll.hpp"
 #include "map_layer.hpp"
 #include "map_update.hpp"
 #include "map_view.hpp"
@@ -1053,7 +1053,7 @@ private:
 // Runs the feed on its own thread and always stops it, even during unwinding.
 class FeedThread {
 public:
-    explicit FeedThread(LiveFeed& feed) : feed_(feed), thread_([&feed] { feed.run(); }) {}
+    explicit FeedThread(AlertPoller& feed) : feed_(feed), thread_([&feed] { feed.run(); }) {}
     ~FeedThread() {
         feed_.stop();
         thread_.join();
@@ -1062,19 +1062,19 @@ public:
     FeedThread& operator=(const FeedThread&) = delete;
 
 private:
-    LiveFeed& feed_;
+    AlertPoller& feed_;
     std::thread thread_;
 };
 
 // The live feed and the thread running it, started and stopped together.
 struct LiveConnection {
     explicit LiveConnection(LiveState& state)
-        : feed({{kTargetsChannel, "", true, kTargetsPollPath}, {kAlertsChannel, kAlertsSnapshotUrl}},
+        : feed(kAlertsChannel, kAlertsSnapshotUrl,
                [&state](const std::string& channel, const json& payload) { state.onPublication(channel, payload); },
                [&state](const std::string& event, const json& details) { state.onEvent(event, details); }),
           thread(feed) {}
 
-    LiveFeed feed;
+    AlertPoller feed;
     FeedThread thread;  // after `feed`, so it stops before the feed goes away
 };
 
@@ -1139,7 +1139,7 @@ bool updateCheckEnabled(const Options& options) {
 // the background, where the window is not drawn and the connection would
 // only drain the battery. Both run on the main loop's thread.
 struct BackgroundWatch {
-    LiveFeed* feed = nullptr;
+    AlertPoller* feed = nullptr;
     bool feedStopped = false;
     void (*forward)(android_app*, int32_t) = nullptr;
 };
@@ -1198,7 +1198,7 @@ void waitForFirstData(const LiveState& state, LiveData& data) {
     const auto deadline = std::chrono::steady_clock::now() + kScreenshotDataTimeout;
     while (std::chrono::steady_clock::now() < deadline) {
         state.copyIfNewer(version, data);
-        if (data.targets && data.alerts) return;
+        if (data.alerts) return;
         std::this_thread::sleep_for(kScreenshotPollInterval);
     }
     std::cerr << "alarmmap: live data incomplete after "

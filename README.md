@@ -10,6 +10,10 @@ in a native window: regions under alert, drones, missiles, guided bombs and
 other targets with their heat trails, over an OpenFreeMap basemap with place
 names.
 
+> **Targets are temporarily not shown.** The site switched off its target
+> display on 2026-11-12, so alarmmap shows region alerts only until targets
+> are available again.
+
 > **Not an official alert source.** alarmmap is an independent project, not
 > affiliated with Ukraine Alarm. Data can be delayed or incomplete. For your
 > safety, rely on official alerts.

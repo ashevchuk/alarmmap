@@ -6,6 +6,14 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Alerts are read from the site's HTTP snapshot, polled every 10 seconds,
+  instead of the WebSocket session, whose connection tokens the site's page
+  no longer provides.
+- Targets are not requested: the site switched its target display off, so the
+  map shows region alerts only until targets are available again.
+
 ## [0.2.12] - 2026-10-31
 
 ### Fixed

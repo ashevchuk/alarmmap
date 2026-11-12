@@ -14,12 +14,11 @@
 // of date. Dropped connections and 5xx answers are reported, not counted.
 
 #include "http.hpp"
-#include "live_feed.hpp"
+#include "alert_poll.hpp"
 #include "map_update.hpp"
 #include "region_geometry.hpp"
 #include "region_store.hpp"
 #include "site.hpp"
-#include "target_snapshot.hpp"
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -43,7 +42,6 @@ constexpr std::size_t kPayloadShownBytes = 300;
 
 struct ChannelResult {
     int parsed = 0;
-    int skipped = 0;
     int failed = 0;
 };
 
@@ -54,17 +52,7 @@ public:
     void onPublication(const std::string& channel, const json& payload) {
         ChannelResult& result = channels_[channel];
         try {
-            if (channel == alarmmap::kTargetsChannel) {
-                const std::optional<alarmmap::TargetSnapshot> snapshot = reader_.read(payload);
-                if (!snapshot) {
-                    ++result.skipped;  // an older or repeated snapshot, as the app drops it
-                } else if (snapshot->skippedEntries > 0) {
-                    // The app shows the rest; for this check it means the format changed.
-                    throw std::runtime_error(std::to_string(snapshot->skippedEntries) + " entries unreadable");
-                } else {
-                    ++result.parsed;
-                }
-            } else if (channel == alarmmap::kAlertsChannel) {
+            if (channel == alarmmap::kAlertsChannel) {
                 // The app gets by with part of a payload; for this check any
                 // part it had to leave out means the format changed.
                 const alarmmap::AlertUpdate update = alarmmap::readAlertUpdate(payload);
@@ -123,12 +111,11 @@ public:
             std::cout << "feed: the site refused a snapshot request x" << refusedSnapshots_ << " (HTTP 4xx)\n";
             ok = false;
         }
-        for (const char* channel : {alarmmap::kTargetsChannel, alarmmap::kAlertsChannel}) {
+        for (const char* channel : {alarmmap::kAlertsChannel}) {
             const auto found = channels_.find(channel);
             const ChannelResult result = found == channels_.end() ? ChannelResult{} : found->second;
-            std::cout << "channel " << channel << ": parsed " << result.parsed << ", skipped " << result.skipped
-                      << ", failed " << result.failed << '\n';
-            // Every channel delivers at least its REST snapshot right after subscribing.
+            std::cout << "channel " << channel << ": parsed " << result.parsed << ", failed " << result.failed << '\n';
+            // The first poll delivers the snapshot.
             if (result.parsed == 0 || result.failed > 0) ok = false;
         }
         if (savedFailures_) std::cout << "failed payloads saved to " << failuresFile_ << '\n';
@@ -137,7 +124,6 @@ public:
 
 private:
     std::string failuresFile_;
-    alarmmap::TargetSnapshotReader reader_;
     std::map<std::string, ChannelResult> channels_;
     std::map<std::string, int> events_;
     bool savedFailures_ = false;
@@ -229,9 +215,8 @@ int main(int argc, char** argv) {
     try {
         const int duration = argc > 1 ? std::stoi(argv[1]) : kDefaultDurationSeconds;
         FeedCheck feed(argc > 2 ? argv[2] : kDefaultFailuresFile);
-        alarmmap::LiveFeed live(
-            {{alarmmap::kTargetsChannel, "", true, alarmmap::kTargetsPollPath},
-             {alarmmap::kAlertsChannel, alarmmap::kAlertsSnapshotUrl}},
+        alarmmap::AlertPoller live(
+            alarmmap::kAlertsChannel, alarmmap::kAlertsSnapshotUrl,
             [&feed](const std::string& channel, const json& payload) { feed.onPublication(channel, payload); },
             [&feed](const std::string& event, const json& details) { feed.onEvent(event, details); });
         std::cout << "listening to the live feed for " << duration << " s\n";

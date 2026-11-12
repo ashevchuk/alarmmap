@@ -19,6 +19,7 @@ find_package(Threads REQUIRED)
 set(WARNING_FLAGS -Wall -Wextra -Wpedantic)
 
 add_library(alarmmap_core STATIC
+    src/alert_poll.cpp
     src/base64url.cpp
     src/basemap.cpp
     src/cities.cpp
@@ -99,7 +100,7 @@ target_compile_definitions(api_check PRIVATE ALARMMAP_DATA_DIR="${CMAKE_CURRENT_
 target_compile_options(api_check PRIVATE ${WARNING_FLAGS})
 
 enable_testing()
-foreach(test_name target_snapshot geometry heat basemap mesh update_check)
+foreach(test_name target_snapshot geometry heat basemap mesh update_check map_update)
     add_executable(${test_name}_test tests/${test_name}_test.cpp)
     target_link_libraries(${test_name}_test PRIVATE alarmmap_core)
     target_compile_options(${test_name}_test PRIVATE ${WARNING_FLAGS})
